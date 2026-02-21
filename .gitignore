@@ -7,4 +7,4 @@ pyproject.toml
 uv.lock
 # Ignore the .env file if it exists
 .env
-data/
+/data/
