@@ -37,5 +37,7 @@ def visualize_comparison(frame, gt_boxes, pred_boxes):
         cv2.rectangle(img, (px, py), (px + pw, py + ph), color, 2)
         cv2.putText(img, f"IoU: {best_iou:.2f}", (px, py + ph + 15), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.putText(img, f"Area: {pw*ph}", (px, py + ph + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
 
     return img
