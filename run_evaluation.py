@@ -18,6 +18,7 @@ ALPHA = 3.0
 SPLIT_RATIO = 0.25
 SAVE_DEBUG = True
 DEBUG_SAVE_PATH = "results/task1_1/"
+ROI_MASK_PATH = "data/AICity_data/AICity_data/train/S03/c010/roi.jpg"
 
 # 1. Load Data
 decoder = VideoDecoder(VIDEO_PATH, device="cpu")
@@ -41,6 +42,10 @@ print("Training Gaussian Model...")
 model = SingleGaussian(alpha=ALPHA, device="cuda")
 model.fit(decoder, num_train_frames=train_len)
 
+# load ROI mask to model mean
+roi_mask = cv2.imread(ROI_MASK_PATH, cv2.IMREAD_GRAYSCALE)
+roi_mask_tensor = torch.from_numpy(roi_mask).to('cuda').to(torch.float32) / 255.0
+
 # 3. Inference & Collection
 pred_boxes_test = {} # {frame_id: [[x,y,w,h], ...]}
 
@@ -59,6 +64,8 @@ for i in tqdm(range(train_len, total_frames)):
     
     # Prediction
     fg_mask = model.apply(frame_tensor)
+    fg_mask = (fg_mask > 0) & (roi_mask_tensor > 0)
+    
     mask_np = fg_mask.cpu().numpy().astype('uint8') * 255
     
     # Post-processing (Essential for getting boxes!)
