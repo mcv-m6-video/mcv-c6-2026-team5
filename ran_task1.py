@@ -10,9 +10,9 @@ from tqdm import tqdm
 # --- Configuration ---
 VIDEO_PATH = "data/AICity_data/AICity_data/train/S03/c010/vdo.avi" # Update this path!
 OUTPUT_DIR = "results/task1_1"
-ALPHA = 7.0 # Maybe we can do some tests with this
+ALPHA = 3.0 # Maybe we can do some tests with this
 SPLIT_RATIO = 0.25
-SAVE_VISUALIZATION = True  # Set True to save the video
+SAVE_VISUALIZATION = False  # Set True to save the video
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -47,7 +47,7 @@ if SAVE_VISUALIZATION:
     fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
     # isColor=False because we are saving a grayscale mask. 
     # Change to True if you want to save the original colored video with overlay.
-    video_writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height), isColor=False)
+    video_writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height)) #, isColor=False)
     print(f"Saving video to: {output_path}")
 
 # 4. Inference Loop
@@ -81,13 +81,15 @@ for i in tqdm(range(train_len, total_frames)):
         # Draw Bounding Boxes
         for (x, y, w, h) in bboxes:
             # Green Box for predictions
-            cv2.rectangle(clean_mask, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.rectangle(original_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
             
         # Draw Raw Mask overlay (Red) to compare
-        # original_img[mask_np > 0] = [0, 0, 255] # Optional: See raw noise vs clean boxes
+        original_img[mask_np > 0] = [0, 0, 255] # Optional: See raw noise vs clean boxes
             
-        video_writer.write(clean_mask)
-
+        video_writer.write(original_img)
+    
+    
+    
 # Cleanup
 if video_writer:
     video_writer.release()
