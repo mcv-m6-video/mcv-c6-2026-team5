@@ -7,7 +7,8 @@ class SingleGaussian(BackgroundModel):
     def __init__(self, alpha: float, device: str = 'cuda'):
         self.alpha = alpha
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
-        self.mean = None
+        self.mean_gray = None
+        self.mean_rgb = None
         self.std = None
 
     def fit(self, video_decoder, num_train_frames: int):
@@ -21,6 +22,7 @@ class SingleGaussian(BackgroundModel):
         # We calculate running sum and sum_squares to avoid loading all frames into RAM
         sum_x = None
         sum_x2 = None
+        sum_rgb = None
         
         for i in range(num_train_frames):
             # Load frame, convert to float, normalize to [0, 255] range logic (keep as float 0-255 for formula)
@@ -28,6 +30,10 @@ class SingleGaussian(BackgroundModel):
             
             # Squeeze batch dim if present (C, H, W)
             if frame.ndim == 4: frame = frame.squeeze(0)
+            
+            if sum_rgb is None:
+                sum_rgb = torch.zeros_like(frame)
+            sum_rgb += frame
             
             # Grayscale conversion (standard for this specific assignment)
             # 0.299R + 0.587G + 0.114B
@@ -42,8 +48,10 @@ class SingleGaussian(BackgroundModel):
             sum_x2 += frame ** 2
 
         # Calculate Mean and Std
-        self.mean = sum_x / num_train_frames
-        variance = (sum_x2 / num_train_frames) - (self.mean ** 2)
+        self.mean_gray = sum_x / num_train_frames
+        self.mean_rgb = sum_rgb / num_train_frames
+        
+        variance = (sum_x2 / num_train_frames) - (self.mean_gray ** 2)
         
         # Clamp variance to avoid negative values due to float precision
         variance = torch.clamp(variance, min=0)
@@ -58,7 +66,7 @@ class SingleGaussian(BackgroundModel):
         Output: Binary Mask (H, W) boolean
         Shadow method hsv or lab
         """
-        if self.mean is None:
+        if self.mean_gray is None:
             raise RuntimeError("Model not trained. Run .fit() first.")
 
         # Ensure frame is on the correct device and is float
@@ -68,10 +76,10 @@ class SingleGaussian(BackgroundModel):
         
         # Convert to grayscale if needed
         if frame.shape[0] == 3:
-             frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+             gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
 
         # The Formula from Slides: |I_i - mu_i| >= alpha * (sigma_i + 2)
-        diff = torch.abs(frame - self.mean)
+        diff = torch.abs(gray_frame - self.mean_gray)
         threshold = self.alpha * (self.std + 2)
         
         # Create binary mask (True = Foreground)
@@ -79,8 +87,10 @@ class SingleGaussian(BackgroundModel):
         if shadow_method != "none":
             if shadow_method == "hsv":
                 method_kwargs = {
-                    "alpha": 0.4,
-                    "beta": 0.85
+                    "alpha": 0.5,
+                    "beta": 0.5,
+                    "tau_s": 60,
+                    "tau_h": 40
                 }
             elif shadow_method == "lab":
                 method_kwargs = {
@@ -91,7 +101,7 @@ class SingleGaussian(BackgroundModel):
             
             fg_mask = remove_shadows(
                 frame_tensor=frame,
-                bg_mean_tensor=self.mean,
+                bg_mean_tensor=self.mean_rgb,
                 fg_mask_tensor=fg_mask,
                 method=shadow_method,
                 device=self.device,
@@ -111,7 +121,8 @@ class RecursiveGaussian(BackgroundModel):
         self.alpha = alpha
         self.rho = rho
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
-        self.mean = None
+        self.mean_gray = None
+        self.mean_rgb = None
         self.std = None
 
     def fit(self, video_decoder, num_train_frames: int):
@@ -123,9 +134,15 @@ class RecursiveGaussian(BackgroundModel):
         
         sum_x = None
         sum_x2 = None
+        sum_rgb = None
         
         for i in range(num_train_frames):
             frame = video_decoder[i].to(self.device).float()
+            
+            
+            if sum_rgb is None:
+                sum_rgb = torch.zeros_like(frame)
+            sum_rgb += frame
             
             # Grayscale conversion (if needed)
             if frame.ndim == 3 and frame.shape[0] == 3:
@@ -138,34 +155,40 @@ class RecursiveGaussian(BackgroundModel):
             if sum_x is None:
                 sum_x = torch.zeros_like(frame)
                 sum_x2 = torch.zeros_like(frame)
+                
 
             sum_x += frame
             sum_x2 += frame ** 2
 
-        self.mean = sum_x / num_train_frames
-        variance = (sum_x2 / num_train_frames) - (self.mean ** 2)
+        self.mean_gray = sum_x / num_train_frames
+        self.mean_rgb = sum_rgb / num_train_frames
+        variance = (sum_x2 / num_train_frames) - (self.mean_gray ** 2)
         variance = torch.clamp(variance, min=0)
         self.std = torch.sqrt(variance)
         
         print("Initialization complete.")
 
-    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv") -> torch.Tensor:
+    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv", shadow_params: dict = None) -> torch.Tensor:
         """
         1. Predict Foreground.
         2. Update Background Model (Mean & Variance) for BG pixels only.
         Shadow method hsv or lab
         """
-        if self.mean is None:
+        if self.mean_gray is None:
             raise RuntimeError("Model not initialized. Run .fit() first.")
+        
+        if shadow_params is None:
+            shadow_params = {}  
 
         # Prepare Frame
         frame = frame.to(self.device).float()
         if frame.ndim == 4: frame = frame.squeeze(0)
+        #detect grayscale if needed
         if frame.ndim == 3 and frame.shape[0] == 3:
-             frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+            gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
 
         # --- STEP 1: PREDICT (Foreground Detection) ---
-        diff = torch.abs(frame - self.mean)
+        diff = torch.abs(gray_frame - self.mean_gray)
         # Formula: |I - mu| >= alpha * (sigma + 2) [cite: 273]
         threshold = self.alpha * (self.std + 2)
         fg_mask = diff >= threshold
@@ -175,43 +198,48 @@ class RecursiveGaussian(BackgroundModel):
         # bg_mask is True where the pixel is Background
         
         if shadow_method != "none":
-            if shadow_method == "hsv":
-                method_kwargs = {
-                    "alpha": 0.4,
-                    "beta": 0.85
-                }
-            elif shadow_method == "lab":
-                method_kwargs = {
-                    "sensitivity": 0.95
-                }
-            else:
-                raise ValueError(f"Unknown shadow removal method: {shadow_method} (none to disable)")
-            
-            fg_mask = remove_shadows(
+            # if shadow_method == "hsv":
+            #     method_kwargs = {
+            #         "alpha": 0.4,
+            #         "beta": 0.9,
+            #         "tau_s": 25,
+            #         "tau_h": 90
+            #     }
+            # elif shadow_method == "lab":
+            #     method_kwargs = {
+            #         "sensitivity": 0.95
+            #     }
+            # else:
+            #     raise ValueError(f"Unknown shadow removal method: {shadow_method} (none to disable)")
+            updated_fg_mask = remove_shadows(
                 frame_tensor=frame,
-                bg_mean_tensor=self.mean,
+                bg_mean_tensor=self.mean_rgb,
                 fg_mask_tensor=fg_mask,
                 method=shadow_method,
                 device=self.device,
-                **method_kwargs
+                **shadow_params
             )
+            fg_mask = updated_fg_mask
         
-        bg_mask = ~fg_mask 
+        bg_mask = ~fg_mask
 
         
         # We only update pixels where bg_mask is True.
         # Formula: mu_t = rho * I_t + (1 - rho) * mu_{t-1} 
-        self.mean[bg_mask] = (self.rho * frame[bg_mask]) + \
-                             ((1 - self.rho) * self.mean[bg_mask])
+        self.mean_gray[bg_mask] = (self.rho * gray_frame[bg_mask]) + \
+                             ((1 - self.rho) * self.mean_gray[bg_mask])
+
+        self.mean_rgb[:, bg_mask] = (self.rho * frame[:, bg_mask]) + \
+                             ((1 - self.rho) * self.mean_rgb[:, bg_mask])
 
         # Formula: sigma^2_t = rho * (I_t - mu_t)^2 + (1 - rho) * sigma^2_{t-1} 
         # Note: We use the *new* mean for the variance calculation variance update
         current_variance = self.std[bg_mask] ** 2
-        diff_sq = (frame[bg_mask] - self.mean[bg_mask]) ** 2
+        diff_sq = (gray_frame[bg_mask] - self.mean_gray[bg_mask]) ** 2
         
         new_variance = (self.rho * diff_sq) + \
                        ((1 - self.rho) * current_variance)
         
-        self.std[bg_mask] = torch.sqrt(new_variance)
+        self.std[bg_mask] = torch.sqrt(new_variance + 1e-6)  # Add small epsilon to avoid sqrt of zero
 
         return fg_mask
