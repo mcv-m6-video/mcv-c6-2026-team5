@@ -10,8 +10,8 @@ def load_gt_xml(xml_path, exclude_parked=True):
 
     for track in root.findall('track'):
 
-        # Only cars
-        if track.attrib.get('label') != 'car':
+        # Only cars&bikes
+        if track.attrib.get('label') not in ['car', 'bike']:
             continue
 
         for box in track.findall('box'):
