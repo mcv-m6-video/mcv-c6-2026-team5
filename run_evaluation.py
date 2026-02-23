@@ -1,96 +1,97 @@
 import torch
 from torchcodec.decoders import VideoDecoder
-from src.background.gaussian import SingleGaussian
-from src.utils.post_processing import post_process_mask
+from src.background.gaussian import RecursiveGaussian
+from src.utils.post_processing import apply_morphology, get_bboxes_from_mask, merge_bboxes_by_distance
 from src.data.parser import load_gt_xml
-from src.evaluation.map import compute_map_randomized
-from src.visualization.debugger import visualize_comparison
+# Import the coco evaluator we made previously
+from src.evaluation.coco_eval import evaluate_coco 
 
 import numpy as np
 import cv2
 from tqdm import tqdm
-import os
 
-# --- Config ---
-VIDEO_PATH = "data/AICity_data/AICity_data/train/S03/c010/vdo.avi"
-GT_PATH = "data/ai_challenge_s03_c010-full_annotation.xml"
-ALPHA = 3.0
-SPLIT_RATIO = 0.25
-SAVE_DEBUG = True
-DEBUG_SAVE_PATH = "results/task1_1/"
-ROI_MASK_PATH = "data/AICity_data/AICity_data/train/S03/c010/roi.jpg"
-
-# 1. Load Data
-decoder = VideoDecoder(VIDEO_PATH, device="cpu")
-total_frames = decoder.metadata.num_frames
-train_len = int(total_frames * SPLIT_RATIO)
-
-print("Loading Ground Truth...")
-gt_boxes = load_gt_xml(GT_PATH)
-
-# Filter GT to only include the testing frames (75%)
-gt_boxes_test = {k: v for k, v in gt_boxes.items() if k >= train_len}
-print(f"Loaded GT for {len(gt_boxes_test)} frames.")
-
-# Extract metadata for the video writer
-fps = decoder.metadata.average_fps  # Get FPS from torchcodec
-width = decoder.metadata.width
-height = decoder.metadata.height
-
-# 2. Train Model
-print("Training Gaussian Model...")
-model = SingleGaussian(alpha=ALPHA, device="cuda")
-model.fit(decoder, num_train_frames=train_len)
-
-# load ROI mask to model mean
-roi_mask = cv2.imread(ROI_MASK_PATH, cv2.IMREAD_GRAYSCALE)
-roi_mask_tensor = torch.from_numpy(roi_mask).to('cuda').to(torch.float32) / 255.0
-
-# 3. Inference & Collection
-pred_boxes_test = {} # {frame_id: [[x,y,w,h], ...]}
-
-debug_writer = None
-if SAVE_DEBUG:
-    debug_path = os.path.join(DEBUG_SAVE_PATH, "debug_comparison.mp4")
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    debug_writer = cv2.VideoWriter(debug_path, fourcc, fps, (width, height)) #, isColor=True)
-    print(f"Saving debug video to: {debug_path}")
-
-
-print("Running Inference...")
-for i in tqdm(range(train_len, total_frames)):
-    
-    frame_tensor = decoder[i].to("cuda").float()
-    
-    # Prediction
-    fg_mask = model.apply(frame_tensor)
-    fg_mask = (fg_mask > 0) & (roi_mask_tensor > 0)
-    
-    mask_np = fg_mask.cpu().numpy().astype('uint8') * 255
-    
-    # Post-processing (Essential for getting boxes!)
-    _, boxes = post_process_mask(mask_np, min_area=150)
-    
-    # Store predictions
-    if len(boxes) > 0:
-        pred_boxes_test[i] = boxes
-    if debug_writer:
-        current_gt = gt_boxes_test.get(i, [])
-        original_img = frame_tensor.cpu().numpy().astype(np.uint8).transpose(1,2,0)
+class Evaluator:
+    def __init__(self, video_path, gt_path, roi_path, split_ratio=0.25):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        debug_frame = visualize_comparison(
-            frame=frame_tensor.cpu().numpy().astype(np.uint8).transpose(1,2,0), # Adjust for your tensor shape
-            gt_boxes=current_gt,
-            pred_boxes=boxes
+        # 1. Load Data Once
+        print("Loading Video and GT...")
+        self.decoder = VideoDecoder(video_path, device="cpu")
+        self.total_frames = self.decoder.metadata.num_frames
+        self.train_len = int(self.total_frames * split_ratio)
+        self.width = self.decoder.metadata.width
+        self.height = self.decoder.metadata.height
+
+        gt_boxes = load_gt_xml(gt_path)
+        # Filter GT for testing phase
+        self.gt_boxes_test = {k: v for k, v in gt_boxes.items() if k >= self.train_len}
+        
+        # Load ROI
+        roi_mask = cv2.imread(roi_path, cv2.IMREAD_GRAYSCALE)
+        self.roi_mask_tensor = torch.from_numpy(roi_mask).to(self.device).float() / 255.0
+
+        # Pre-train Initialization (Since it's non-adaptive, we can technically cache the means 
+        # but Recursive updates them, so we must re-init the model object every time, 
+        # BUT we can keep the raw training frames in RAM if small enough. 
+        # For now, let's just let the model fit() read from decoder to save RAM).
+
+    def run_experiment(self, params):
+        """
+        params: dict with keys:
+            alpha (float), rho (float),
+            shadow_method (str),
+            tau_s (float), tau_h (float), shadow_alpha (float), shadow_beta (float)
+        """
+        
+        # 1. Setup Model
+        model = RecursiveGaussian(
+            alpha=params['alpha'], 
+            rho=params['rho'], 
+            device=self.device
         )
-        debug_writer.write(debug_frame)
-if debug_writer:
-    debug_writer.release()
-
         
+        # Train (Initialization)
+        # Note: If this takes too long, you can compute initial mean/std ONCE 
+        # in __init__ and pass it to the model manually.
+        model.fit(self.decoder, num_train_frames=self.train_len)
+        
+        pred_boxes_test = {}
+        
+        # Prepare shadow params
+        shadow_params = {
+            "alpha": params.get('shadow_alpha', 0.5),
+            "beta": params.get('shadow_beta', 0.9),
+            "tau_s": params.get('tau_s', 60),
+            "tau_h": params.get('tau_h', 40)
+        }
 
-# 4. Evaluate (Task 1.2)
-print("Evaluating mAP (Randomized Ranking)...")
-mAP = compute_map_randomized(gt_boxes_test, pred_boxes_test, n_runs=10, iou_thresh=0.3)
+        # 2. Inference Loop
+        # We can skip tqdm here to keep optimization logs clean
+        for i in range(self.train_len, self.total_frames):
+            frame_tensor = self.decoder[i].to(self.device).float()
+            
+            fg_mask = model.apply(
+                frame_tensor, 
+                shadow_method=params['shadow_method'],
+                shadow_params=shadow_params
+            )
+            
+            # Apply ROI
+            fg_mask = (fg_mask > 0) & (self.roi_mask_tensor > 0)
+            
+            mask_np = fg_mask.cpu().numpy().astype('uint8') * 255
+            
+            # Post-processing
+            
+            # _, boxes = post_process_mask(mask_np, min_area=params.get('min_area', 150))
+            cleaned_mask = apply_morphology(mask_np, kernel_opening_size=params.get('morph_open', 5), kernel_closing_size=params.get('morph_close', 20), operation=params.get('morph_operation', "open_close"))
+            boxes = get_bboxes_from_mask(cleaned_mask, min_area=params.get('min_area', 150))
+            boxes = merge_bboxes_by_distance(boxes, min_distance=params.get('merge_dist', 40), frame_height=self.height)
+            
+            if len(boxes) > 0:
+                pred_boxes_test[i] = boxes
 
-print(f"Final mAP (Alpha={ALPHA}): {mAP:.4f}")
+        # 3. Evaluate
+        map50 = evaluate_coco(self.gt_boxes_test, pred_boxes_test, self.height, self.width)
+        
+        return map50
