@@ -1,5 +1,6 @@
 import torch
 from .base import BackgroundModel # Assuming you created the abstract base class
+from src.utils.shadow_removal import remove_shadows
 import numpy
 
 class SingleGaussian(BackgroundModel):
@@ -50,11 +51,12 @@ class SingleGaussian(BackgroundModel):
         
         print("Training complete.")
 
-    def apply(self, frame: torch.Tensor) -> torch.Tensor:
+    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv") -> torch.Tensor:
         """
         Apply foreground detection: |I - u| >= alpha * (std + 2)
         Input: Tensor (C, H, W) or (H, W) in range [0, 255]
         Output: Binary Mask (H, W) boolean
+        Shadow method hsv or lab
         """
         if self.mean is None:
             raise RuntimeError("Model not trained. Run .fit() first.")
@@ -73,5 +75,143 @@ class SingleGaussian(BackgroundModel):
         threshold = self.alpha * (self.std + 2)
         
         # Create binary mask (True = Foreground)
-        mask = diff >= threshold
-        return mask
+        fg_mask = diff >= threshold
+        if shadow_method != "none":
+            if shadow_method == "hsv":
+                method_kwargs = {
+                    "alpha": 0.4,
+                    "beta": 0.85
+                }
+            elif shadow_method == "lab":
+                method_kwargs = {
+                    "sensitivity": 0.95
+                }
+            else:
+                raise ValueError(f"Unknown shadow removal method: {shadow_method} (none to disable)")
+            
+            fg_mask = remove_shadows(
+                frame_tensor=frame,
+                bg_mean_tensor=self.mean,
+                fg_mask_tensor=fg_mask,
+                method=shadow_method,
+                device=self.device,
+                **method_kwargs
+            )
+
+        return fg_mask
+
+
+class RecursiveGaussian(BackgroundModel):
+    def __init__(self, alpha: float, rho: float, device: str = 'cuda'):
+        """
+        Args:
+            alpha: Threshold multiplier for detection.
+            rho: Learning rate (0 < rho < 1). Controls how fast bg adapts.
+        """
+        self.alpha = alpha
+        self.rho = rho
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.mean = None
+        self.std = None
+
+    def fit(self, video_decoder, num_train_frames: int):
+        """
+        Initialization: Compute initial Mean and Std from the first N frames.
+        Same as Task 1.1 (Non-Adaptive initialization).
+        """
+        print(f"Initializing Recursive Gaussian on {num_train_frames} frames...")
+        
+        sum_x = None
+        sum_x2 = None
+        
+        for i in range(num_train_frames):
+            frame = video_decoder[i].to(self.device).float()
+            
+            # Grayscale conversion (if needed)
+            if frame.ndim == 3 and frame.shape[0] == 3:
+                frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+            elif frame.ndim == 4: # Handle batch dimension
+                frame = frame.squeeze(0)
+                if frame.shape[0] == 3:
+                    frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+            
+            if sum_x is None:
+                sum_x = torch.zeros_like(frame)
+                sum_x2 = torch.zeros_like(frame)
+
+            sum_x += frame
+            sum_x2 += frame ** 2
+
+        self.mean = sum_x / num_train_frames
+        variance = (sum_x2 / num_train_frames) - (self.mean ** 2)
+        variance = torch.clamp(variance, min=0)
+        self.std = torch.sqrt(variance)
+        
+        print("Initialization complete.")
+
+    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv") -> torch.Tensor:
+        """
+        1. Predict Foreground.
+        2. Update Background Model (Mean & Variance) for BG pixels only.
+        Shadow method hsv or lab
+        """
+        if self.mean is None:
+            raise RuntimeError("Model not initialized. Run .fit() first.")
+
+        # Prepare Frame
+        frame = frame.to(self.device).float()
+        if frame.ndim == 4: frame = frame.squeeze(0)
+        if frame.ndim == 3 and frame.shape[0] == 3:
+             frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+
+        # --- STEP 1: PREDICT (Foreground Detection) ---
+        diff = torch.abs(frame - self.mean)
+        # Formula: |I - mu| >= alpha * (sigma + 2) [cite: 273]
+        threshold = self.alpha * (self.std + 2)
+        fg_mask = diff >= threshold
+        
+        # --- STEP 2: UPDATE (Recursive Adaptation) ---
+        # "if pixel in Background then update" 
+        # bg_mask is True where the pixel is Background
+        
+        if shadow_method != "none":
+            if shadow_method == "hsv":
+                method_kwargs = {
+                    "alpha": 0.4,
+                    "beta": 0.85
+                }
+            elif shadow_method == "lab":
+                method_kwargs = {
+                    "sensitivity": 0.95
+                }
+            else:
+                raise ValueError(f"Unknown shadow removal method: {shadow_method} (none to disable)")
+            
+            fg_mask = remove_shadows(
+                frame_tensor=frame,
+                bg_mean_tensor=self.mean,
+                fg_mask_tensor=fg_mask,
+                method=shadow_method,
+                device=self.device,
+                **method_kwargs
+            )
+        
+        bg_mask = ~fg_mask 
+
+        
+        # We only update pixels where bg_mask is True.
+        # Formula: mu_t = rho * I_t + (1 - rho) * mu_{t-1} 
+        self.mean[bg_mask] = (self.rho * frame[bg_mask]) + \
+                             ((1 - self.rho) * self.mean[bg_mask])
+
+        # Formula: sigma^2_t = rho * (I_t - mu_t)^2 + (1 - rho) * sigma^2_{t-1} 
+        # Note: We use the *new* mean for the variance calculation variance update
+        current_variance = self.std[bg_mask] ** 2
+        diff_sq = (frame[bg_mask] - self.mean[bg_mask]) ** 2
+        
+        new_variance = (self.rho * diff_sq) + \
+                       ((1 - self.rho) * current_variance)
+        
+        self.std[bg_mask] = torch.sqrt(new_variance)
+
+        return fg_mask
