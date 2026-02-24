@@ -1,46 +1,153 @@
 import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
 
-def apply_morphology(mask_np, kernel_opening_size=5, kernel_closing_size=10, operation="open_close", morph_shape="ellipse"):
+# def apply_morphology(mask_np, kernel_opening_size=5, kernel_closing_size=10, operation="open_close", morph_shape="ellipse"):
+#     """
+#     Applies morphological operations to clean the mask.
+    
+#     Args:
+#         mask_np: Binary mask.
+#         kernel_size: Size of the structuring element (e.g., 3, 5, 7).
+#         operation: String describing the workflow:
+#                    - "open": Erosion -> Dilation
+#                    - "close": Dilation -> Erosion
+#                    - "open_close": Open then Close (Standard for noise removal + hole filling)
+#                    - "close_open": Close then Open
+#     """
+#     if morph_shape == "rect":
+#         shape = cv2.MORPH_RECT
+#     elif morph_shape == "cross":
+#         shape = cv2.MORPH_CROSS
+#     else:
+#         shape = cv2.MORPH_ELLIPSE
+
+#     # 1. Create Kernel
+#     # MORPH_ELLIPSE is generally better for natural objects (cars) than RECT
+#     opening_kernel = cv2.getStructuringElement(shape, (kernel_opening_size, kernel_opening_size))
+#     closing_kernel = cv2.getStructuringElement(shape, (kernel_closing_size, kernel_closing_size))
+    
+#     cleaned_mask = mask_np.copy()
+    
+#     # 2. Apply Operations based on the param
+#     if operation == "open":
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
+#     elif operation == "close":
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
+#     elif operation == "open_close":
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
+#     elif operation == "close_open":
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
+#         cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
+        
+#     return cleaned_mask
+
+def _get_kernel(size, shape, device):
     """
-    Applies morphological operations to clean the mask.
+    Creates a binary kernel for GPU morphology.
+    """
+    if size % 2 == 0: size += 1 # Ensure odd size
+    
+    # Create the grid
+    coords = torch.arange(size, device=device).float() - (size - 1) / 2
+    x, y = torch.meshgrid(coords, coords, indexing='ij')
+    
+    if shape == "rect":
+        kernel = torch.ones((size, size), device=device)
+    elif shape == "cross":
+        kernel = torch.zeros((size, size), device=device)
+        mid = size // 2
+        kernel[mid, :] = 1
+        kernel[:, mid] = 1
+    else: # ellipse (Euclidean distance)
+        dist = x**2 + y**2
+        radius = (size - 1) / 2
+        kernel = (dist <= radius**2).float()
+        
+    return kernel.view(1, 1, size, size)
+
+def apply_morphology(mask_tensor, operation, kernel_opening_size=None, kernel_closing_size=None, morph_shape="ellipse", kernel_size=5):
+    """
+    Performs morphology on a GPU Tensor.
     
     Args:
-        mask_np: Binary mask.
-        kernel_size: Size of the structuring element (e.g., 3, 5, 7).
-        operation: String describing the workflow:
-                   - "open": Erosion -> Dilation
-                   - "close": Dilation -> Erosion
-                   - "open_close": Open then Close (Standard for noise removal + hole filling)
-                   - "close_open": Close then Open
+        operation: "open", "close", "open_close", "close_open"
+        kernel_size: Base size (used if specific open/close sizes aren't provided)
+        kernel_size_open: Specific size for opening
+        kernel_size_close: Specific size for closing
     """
-    if morph_shape == "rect":
-        shape = cv2.MORPH_RECT
-    elif morph_shape == "cross":
-        shape = cv2.MORPH_CROSS
-    else:
-        shape = cv2.MORPH_ELLIPSE
+    # Handle sizes
+    k_open = kernel_opening_size if kernel_opening_size else kernel_size
+    k_close = kernel_closing_size if kernel_closing_size else kernel_size
+    
+    if not k_open: k_open = 5
+    if not k_close: k_close = 5
 
-    # 1. Create Kernel
-    # MORPH_ELLIPSE is generally better for natural objects (cars) than RECT
-    opening_kernel = cv2.getStructuringElement(shape, (kernel_opening_size, kernel_opening_size))
-    closing_kernel = cv2.getStructuringElement(shape, (kernel_closing_size, kernel_closing_size))
+    # Ensure 4D shape (B, C, H, W)
+    original_shape = mask_tensor.shape
+    if mask_tensor.ndim == 2:
+        x = mask_tensor.unsqueeze(0).unsqueeze(0).float()
+    elif mask_tensor.ndim == 3:
+        x = mask_tensor.unsqueeze(1).float()
+    else:
+        x = mask_tensor.float()
+
+    def get_ops(k_size):
+        """Returns dilate/erode functions for a specific kernel size"""
+        if k_size <= 1: 
+            return lambda t: t, lambda t: t
+            
+        pad = k_size // 2
+        kernel = _get_kernel(k_size, morph_shape, mask_tensor.device)
+        kernel_sum = kernel.sum()
+
+        def dilate(t):
+            out = F.conv2d(t, kernel, padding=pad)
+            return (out > 0).float()
+
+        def erode(t):
+            out = F.conv2d(t, kernel, padding=pad)
+            return (out >= kernel_sum - 0.1).float()
+            
+        return dilate, erode
+
+    # -- EXECUTE OPERATIONS --
     
-    cleaned_mask = mask_np.copy()
-    
-    # 2. Apply Operations based on the param
     if operation == "open":
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
-    elif operation == "close":
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
-    elif operation == "open_close":
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
-    elif operation == "close_open":
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, closing_kernel)
-        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, opening_kernel)
+        dilate, erode = get_ops(k_open)
+        # Opening: Erode -> Dilate
+        x = dilate(erode(x))
         
-    return cleaned_mask
+    elif operation == "close":
+        dilate, erode = get_ops(k_close)
+        # Closing: Dilate -> Erode
+        x = erode(dilate(x))
+        
+    elif operation == "open_close":
+        # 1. Open (Remove Noise)
+        dilate_o, erode_o = get_ops(k_open)
+        x = dilate_o(erode_o(x))
+        
+        # 2. Close (Fill Holes)
+        dilate_c, erode_c = get_ops(k_close)
+        x = erode_c(dilate_c(x))
+
+    elif operation == "close_open":
+        # 1. Close
+        dilate_c, erode_c = get_ops(k_close)
+        x = erode_c(dilate_c(x))
+        
+        # 2. Open
+        dilate_o, erode_o = get_ops(k_open)
+        x = dilate_o(erode_o(x))
+
+    # Restore shape
+    if len(original_shape) == 2:
+        return x.squeeze(0).squeeze(0) > 0.5
+    else:
+        return x > 0.5
 
 def get_bboxes_from_mask(mask_np, min_area=100):
     """
