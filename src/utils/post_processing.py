@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def apply_morphology(mask_np, kernel_opening_size=5, kernel_closing_size=20, operation="open_close"):
+def apply_morphology(mask_np, kernel_opening_size=5, kernel_closing_size=10, operation="open_close", morph_shape="ellipse"):
     """
     Applies morphological operations to clean the mask.
     
@@ -14,10 +14,17 @@ def apply_morphology(mask_np, kernel_opening_size=5, kernel_closing_size=20, ope
                    - "open_close": Open then Close (Standard for noise removal + hole filling)
                    - "close_open": Close then Open
     """
+    if morph_shape == "rect":
+        shape = cv2.MORPH_RECT
+    elif morph_shape == "cross":
+        shape = cv2.MORPH_CROSS
+    else:
+        shape = cv2.MORPH_ELLIPSE
+
     # 1. Create Kernel
     # MORPH_ELLIPSE is generally better for natural objects (cars) than RECT
-    opening_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_opening_size, kernel_opening_size))
-    closing_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_closing_size, kernel_closing_size))
+    opening_kernel = cv2.getStructuringElement(shape, (kernel_opening_size, kernel_opening_size))
+    closing_kernel = cv2.getStructuringElement(shape, (kernel_closing_size, kernel_closing_size))
     
     cleaned_mask = mask_np.copy()
     

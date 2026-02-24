@@ -73,7 +73,10 @@ class Evaluator:
             fg_mask = model.apply(
                 frame_tensor, 
                 shadow_method=params['shadow_method'],
-                shadow_params=shadow_params
+                shadow_params=shadow_params,
+                detection_mode=params['detection_mode'],
+                update_buffer=params['update_buffer']
+                
             )
             
             # Apply ROI
@@ -84,7 +87,13 @@ class Evaluator:
             # Post-processing
             
             # _, boxes = post_process_mask(mask_np, min_area=params.get('min_area', 150))
-            cleaned_mask = apply_morphology(mask_np, kernel_opening_size=params.get('morph_open', 5), kernel_closing_size=params.get('morph_close', 20), operation=params.get('morph_operation', "open_close"))
+            cleaned_mask = apply_morphology(
+                                        mask_np, 
+                                        kernel_opening_size=params['kernel_opening_size'],
+                                        kernel_closing_size=params['kernel_closing_size'],
+                                        operation=params['morph_op'],
+                                        morph_shape=params['morph_shape']
+                                        )
             boxes = get_bboxes_from_mask(cleaned_mask, min_area=params.get('min_area', 150))
             boxes = merge_bboxes_by_distance(boxes, min_distance=params.get('merge_dist', 40), frame_height=self.height)
             

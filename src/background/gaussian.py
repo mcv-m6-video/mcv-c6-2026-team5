@@ -59,7 +59,10 @@ class SingleGaussian(BackgroundModel):
         
         print("Training complete.")
 
-    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv") -> torch.Tensor:
+    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv", 
+              shadow_params: dict = None, 
+              detection_mode: str = "gray",   # "gray" or "rgb"
+             )-> torch.Tensor:        
         """
         Apply foreground detection: |I - u| >= alpha * (std + 2)
         Input: Tensor (C, H, W) or (H, W) in range [0, 255]
@@ -73,17 +76,29 @@ class SingleGaussian(BackgroundModel):
         frame = frame.to(self.device).float()
         
         if frame.ndim == 4: frame = frame.squeeze(0)
-        
-        # Convert to grayscale if needed
-        if frame.shape[0] == 3:
-             gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+        if detection_mode == "rgb":
+            # RGB Detection: Foreground if ANY channel deviates enough
+            # We use mean_rgb (3, H, W) instead of mean_gray
+            diff = torch.abs(frame - self.mean_rgb) 
+            # Threshold needs to adapt to 3 channels. 
+            # We approximate std for RGB simply or reuse the gray std broadcasted 
+            # (A proper RGB Mahalanobis distance is better but expensive; this is a fast approximation)
+            threshold = self.alpha * (self.std + 2) 
+            # If any channel (R, G, or B) exceeds threshold, it's FG
+            fg_mask = torch.any(diff >= threshold, dim=0)
+            
+        else:
+            # Convert to grayscale if needed
+            if frame.shape[0] == 3:
+                gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
 
-        # The Formula from Slides: |I_i - mu_i| >= alpha * (sigma_i + 2)
-        diff = torch.abs(gray_frame - self.mean_gray)
-        threshold = self.alpha * (self.std + 2)
-        
-        # Create binary mask (True = Foreground)
-        fg_mask = diff >= threshold
+            # The Formula from Slides: |I_i - mu_i| >= alpha * (sigma_i + 2)
+            diff = torch.abs(gray_frame - self.mean_gray)
+            threshold = self.alpha * (self.std + 2)
+            
+            # Create binary mask (True = Foreground)
+            fg_mask = diff >= threshold
+
         if shadow_method != "none":
             if shadow_method == "hsv":
                 method_kwargs = {
@@ -123,7 +138,7 @@ class RecursiveGaussian(BackgroundModel):
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.mean_gray = None
         self.mean_rgb = None
-        self.std = None
+        self.std = None        
 
     def fit(self, video_decoder, num_train_frames: int):
         """
@@ -168,7 +183,11 @@ class RecursiveGaussian(BackgroundModel):
         
         print("Initialization complete.")
 
-    def apply(self, frame: torch.Tensor, shadow_method: str = "hsv", shadow_params: dict = None) -> torch.Tensor:
+    def apply(self, frame: torch.Tensor, 
+              shadow_method: str = "hsv", 
+              shadow_params: dict = None, 
+              detection_mode: str = "gray",   # "gray" or "rgb"
+              update_buffer: int = 0 )-> torch.Tensor:         # 0, 1, 2... dilation iterations) 
         """
         1. Predict Foreground.
         2. Update Background Model (Mean & Variance) for BG pixels only.
@@ -180,18 +199,32 @@ class RecursiveGaussian(BackgroundModel):
         if shadow_params is None:
             shadow_params = {}  
 
-        # Prepare Frame
         frame = frame.to(self.device).float()
         if frame.ndim == 4: frame = frame.squeeze(0)
-        #detect grayscale if needed
-        if frame.ndim == 3 and frame.shape[0] == 3:
-            gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+        # Prepare Frame
+        if detection_mode == "rgb":
+            # RGB Detection: Foreground if ANY channel deviates enough
+            # We use mean_rgb (3, H, W) instead of mean_gray
+            diff = torch.abs(frame - self.mean_rgb) 
+            # Threshold needs to adapt to 3 channels. 
+            # We approximate std for RGB simply or reuse the gray std broadcasted 
+            # (A proper RGB Mahalanobis distance is better but expensive; this is a fast approximation)
+            threshold = self.alpha * (self.std + 2) 
+            # If any channel (R, G, or B) exceeds threshold, it's FG
+            fg_mask = torch.any(diff >= threshold, dim=0)
+            
+        else:
+            #detect grayscale if needed
+            if frame.ndim == 3 and frame.shape[0] == 3:
+                gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+            else:
+                gray_frame = frame
 
-        # --- STEP 1: PREDICT (Foreground Detection) ---
-        diff = torch.abs(gray_frame - self.mean_gray)
-        # Formula: |I - mu| >= alpha * (sigma + 2) [cite: 273]
-        threshold = self.alpha * (self.std + 2)
-        fg_mask = diff >= threshold
+            # --- STEP 1: PREDICT (Foreground Detection) ---
+            diff = torch.abs(gray_frame - self.mean_gray)
+            # Formula: |I - mu| >= alpha * (sigma + 2) [cite: 273]
+            threshold = self.alpha * (self.std + 2)
+            fg_mask = diff >= threshold
         
         # --- STEP 2: UPDATE (Recursive Adaptation) ---
         # "if pixel in Background then update" 
@@ -222,7 +255,19 @@ class RecursiveGaussian(BackgroundModel):
             fg_mask = updated_fg_mask
         
         bg_mask = ~fg_mask
+        
+        if update_buffer > 0:
+            # We use MaxPool as a fast GPU dilation
+            # Kernel size 3=1 pixel dilation, 5=2 pixels, etc.
+            k_size = 2 * update_buffer + 1
+            fg_dilated = torch.nn.functional.max_pool2d(
+                fg_mask.float().unsqueeze(0).unsqueeze(0), 
+                kernel_size=k_size, stride=1, padding=update_buffer
+            ).squeeze() > 0
+            update_mask = ~fg_dilated
 
+        if detection_mode == "rgb" and (frame.ndim == 3 and frame.shape[0] == 3):
+             gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
         
         # We only update pixels where bg_mask is True.
         # Formula: mu_t = rho * I_t + (1 - rho) * mu_{t-1} 
