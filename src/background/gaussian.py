@@ -265,6 +265,7 @@ class RecursiveGaussian(BackgroundModel):
                 kernel_size=k_size, stride=1, padding=update_buffer
             ).squeeze() > 0
             update_mask = ~fg_dilated
+            bg_mask = update_mask
 
         if detection_mode == "rgb" and (frame.ndim == 3 and frame.shape[0] == 3):
              gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
