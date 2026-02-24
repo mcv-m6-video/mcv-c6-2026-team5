@@ -70,30 +70,37 @@ class Evaluator:
         for i in range(self.train_len, self.total_frames):
             frame_tensor = self.decoder[i].to(self.device).float()
             
-            fg_mask = model.apply(
+            fg_mask_tensor = model.apply(
                 frame_tensor, 
                 shadow_method=params['shadow_method'],
                 shadow_params=shadow_params,
                 detection_mode=params['detection_mode'],
-                update_buffer=params['update_buffer']
+                update_buffer=0#params['update_buffer']
                 
             )
             
             # Apply ROI
-            fg_mask = (fg_mask > 0) & (self.roi_mask_tensor > 0)
+            fg_mask_tensor = (fg_mask_tensor > 0) & (self.roi_mask_tensor > 0)
             
-            mask_np = fg_mask.cpu().numpy().astype('uint8') * 255
+            # print(f"fg_mask_tensor:\n{fg_mask_tensor.cpu().numpy()}")
+            # print(type(fg_mask_tensor))
+            # mask to 
+            fg_mask_uint_tensor = (fg_mask_tensor.float()*255).to(torch.uint8)
+            # print(f"fg_mask_uint_tensor:\n{fg_mask_uint_tensor.cpu().numpy()}")
+            # print(type(fg_mask_uint_tensor))
+            # print(np.unique(fg_mask_uint_tensor.cpu().numpy()))
+            # exit()
             
             # Post-processing
-            
             # _, boxes = post_process_mask(mask_np, min_area=params.get('min_area', 150))
             cleaned_mask = apply_morphology(
-                                        mask_np, 
+                                        fg_mask_uint_tensor, 
                                         kernel_opening_size=params['kernel_opening_size'],
                                         kernel_closing_size=params['kernel_closing_size'],
                                         operation=params['morph_op'],
                                         morph_shape=params['morph_shape']
                                         )
+            cleaned_mask = cleaned_mask.cpu().numpy().astype('uint8') * 255
             boxes = get_bboxes_from_mask(cleaned_mask, min_area=params.get('min_area', 150))
             boxes = merge_bboxes_by_distance(boxes, min_distance=params.get('merge_dist', 40), frame_height=self.height)
             
