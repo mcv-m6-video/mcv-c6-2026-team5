@@ -67,7 +67,7 @@ class Evaluator:
 
         # 2. Inference Loop
         # We can skip tqdm here to keep optimization logs clean
-        for i in range(self.train_len, self.total_frames):
+        for i in tqdm(range(self.train_len, self.total_frames), desc="Evaluating Frames"):
             frame_tensor = self.decoder[i].to(self.device).float()
             
             fg_mask_tensor = model.apply(
