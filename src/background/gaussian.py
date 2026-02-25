@@ -86,11 +86,13 @@ class SingleGaussian(BackgroundModel):
             threshold = self.alpha * (self.std + 2) 
             # If any channel (R, G, or B) exceeds threshold, it's FG
             fg_mask = torch.any(diff >= threshold, dim=0)
-            
+            gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
         else:
             # Convert to grayscale if needed
             if frame.shape[0] == 3:
                 gray_frame = 0.299 * frame[0] + 0.587 * frame[1] + 0.114 * frame[2]
+            else:
+                gray_frame = frame
 
             # The Formula from Slides: |I_i - mu_i| >= alpha * (sigma_i + 2)
             diff = torch.abs(gray_frame - self.mean_gray)
@@ -100,27 +102,14 @@ class SingleGaussian(BackgroundModel):
             fg_mask = diff >= threshold
 
         if shadow_method != "none":
-            if shadow_method == "hsv":
-                method_kwargs = {
-                    "alpha": 0.5,
-                    "beta": 0.5,
-                    "tau_s": 60,
-                    "tau_h": 40
-                }
-            elif shadow_method == "lab":
-                method_kwargs = {
-                    "sensitivity": 0.95
-                }
-            else:
-                raise ValueError(f"Unknown shadow removal method: {shadow_method} (none to disable)")
-            
+           
             fg_mask = remove_shadows(
                 frame_tensor=frame,
                 bg_mean_tensor=self.mean_rgb,
                 fg_mask_tensor=fg_mask,
                 method=shadow_method,
                 device=self.device,
-                **method_kwargs
+                **shadow_params
             )
 
         return fg_mask
@@ -265,6 +254,7 @@ class RecursiveGaussian(BackgroundModel):
                 kernel_size=k_size, stride=1, padding=update_buffer
             ).squeeze() > 0
             update_mask = ~fg_dilated
+            
             bg_mask = update_mask
 
         if detection_mode == "rgb" and (frame.ndim == 3 and frame.shape[0] == 3):
@@ -288,4 +278,4 @@ class RecursiveGaussian(BackgroundModel):
         
         self.std[bg_mask] = torch.sqrt(new_variance + 1e-6)  # Add small epsilon to avoid sqrt of zero
 
-        return fg_mask
+        return fg_mask #, fg_dilated
