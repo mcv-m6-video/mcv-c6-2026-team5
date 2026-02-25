@@ -75,7 +75,7 @@ class Evaluator:
                 shadow_method=params['shadow_method'],
                 shadow_params=shadow_params,
                 detection_mode=params['detection_mode'],
-                update_buffer=0#params['update_buffer']
+                update_buffer=params['update_buffer']
                 
             )
             
