@@ -1,0 +1,27 @@
+{
+  "video": "/ghome/group05/bernat/mcv-c6-2026-team5/data/AICity_data/AICity_data/train/S03/c010/vdo.avi",
+  "method": "mogs",
+  "out_dir": "results/task3_bg_sota_min_hw_15",
+  "save_video": false,
+  "show": false,
+  "draw_mask": false,
+  "roi_mask": null,
+
+  "history": 500,
+  "var_threshold": 12.0,
+  "detect_shadows": true,
+  "remove_shadows": true,
+  "learning_rate": -1.0,
+
+  "fg_threshold": 200,
+  "kernel_open": 5,
+  "kernel_close": 15,
+  "min_area": 800,
+
+  "min_w": 15,
+  "min_h": 15,
+  "max_w": null,
+  "max_h": null,
+  "aspect_min": 0.3,
+  "aspect_max": 4.0
+}
