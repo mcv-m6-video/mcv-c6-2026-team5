@@ -7,11 +7,12 @@ from run_evaluation import Evaluator
 
 # --- CONFIG ---
 VIDEO_PATH = "data/AICity_data/AICity_data/train/S03/c010/vdo.avi"
+VIDEO_PATH = "/dev/shm/vdo.avi" # Copy to RAM for faster access during optimization
 GT_PATH = "data/ai_challenge_s03_c010-full_annotation.xml"
 ROI_PATH = "data/AICity_data/AICity_data/train/S03/c010/roi.jpg"
-STUDY_NAME = "task1_recursive_gaussian_more_params"
-STORAGE_DB = "sqlite:///optuna_study_more_params.db"  # Saves progress to a file
-CSV_LOG_FILE = "results/optimization_results_more_params.csv"
+STUDY_NAME = "task1_recursive_gaussian_more_params_final"
+STORAGE_DB = "sqlite:///optuna_study_more_params_final.db"  # Saves progress to a file
+CSV_LOG_FILE = "results/optimization_results_more_params_final.csv"
 
 print("initializing evaluator")
 # Initialize Evaluator ONCE
@@ -37,7 +38,6 @@ def objective(trial):
         # Background Model
         'alpha': trial.suggest_float('alpha', 1.5, 6.0),
         'rho': trial.suggest_float('rho', 0.005, 0.2, log=True),
-        'detection_mode': trial.suggest_categorical('detection_mode', ["gray", "rgb"]),
         'update_buffer': trial.suggest_int('update_buffer', 0, 4), # Try 0 to 4 pixels of safety
         
         # Shadow Removal (HSV)
@@ -55,9 +55,6 @@ def objective(trial):
         'morph_op': trial.suggest_categorical('morph_op', ["open", "close", "open_close", "close_open"]),
         'min_area': trial.suggest_int('min_area', 200, 600),
         'merge_dist': trial.suggest_int('merge_dist', 10, 50),
-        
-        
-        
     }
     
     # 2. Run Experiment
