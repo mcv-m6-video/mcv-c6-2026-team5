@@ -16,3 +16,5 @@ uv.lock
 .env
 week1/data/
 .cache
+# ignore finished week1
+week1
