@@ -2,9 +2,17 @@
 .vscode
 __pycache__/
 *.pyc
+*.db
+# image/video formats
+*.png
+*.gif
+*.mp4
+*.jpg
+# uv astral things
 .python-version
 pyproject.toml
 uv.lock
 # Ignore the .env file if it exists
 .env
-/data/
+week1/data/
+.cache

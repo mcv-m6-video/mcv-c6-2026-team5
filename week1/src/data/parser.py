@@ -17,8 +17,10 @@ def load_gt_xml(xml_path, exclude_parked=True):
         for box in track.findall('box'):
 
             # Skip if outside frame
-            if box.attrib.get('outside') == '1':
+            if box.attrib.get('outside') == '0':
                 continue
+            # if box.attrib.get('occluded') == '1':
+            #     continue
             
             is_parked = False
             for attr in box.findall('attribute'):

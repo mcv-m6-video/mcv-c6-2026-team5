@@ -11,6 +11,10 @@ def compute_iou(boxA, boxB):
     # Compute intersection area
     interWidth = max(0, xB - xA)
     interHeight = max(0, yB - yA)
+    
+    # reject non-overlapping boxes
+    if interWidth <=0 or interHeight <=0 :
+        return -1.0
     interArea = interWidth * interHeight
 
     # Compute union area

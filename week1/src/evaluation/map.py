@@ -59,14 +59,16 @@ def evaluate_detections(gt_boxes_by_frame, pred_boxes_by_frame, iou_thresh=0.5):
             if iou > best_iou:
                 best_iou = iou
                 best_gt_idx = idx
-
+        # if best_iou != -1:
+        #     print(f"Best IoU found: {best_iou}")
+        
         # Determine TP or FP 
         if best_iou >= iou_thresh:
             tp[i] = 1
             detected_gt[frame_id][best_gt_idx] = True
         else:
             fp[i] = 1
-
+    
     # Compute Cumulative Precision and Recall
     cum_tp = np.cumsum(tp)
     cum_fp = np.cumsum(fp)
