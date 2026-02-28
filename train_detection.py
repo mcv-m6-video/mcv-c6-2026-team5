@@ -18,9 +18,9 @@ MODEL = 'rcnn'  # or 'yolo'
 def main():
     # 1. Load Data
     full_dataset = AICityDataset(video_path=VIDEO_PATH, xml_path=XML_PATH)
-
+    len_dataset = len(full_dataset)
     # 2. Split Data
-    splitter = DataSplitter(full_dataset)
+    splitter = DataSplitter(len_dataset)
     train_idx, val_idx = splitter.get_split(strategy=SPLIT_STRATEGY, k=4)
 
     # 3. Initialize Model
