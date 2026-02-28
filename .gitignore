@@ -12,9 +12,8 @@ __pycache__/
 .python-version
 pyproject.toml
 uv.lock
+data/
 # Ignore the .env file if it exists
 .env
-week1/data/
-.cache
 # ignore finished week1
 week1
