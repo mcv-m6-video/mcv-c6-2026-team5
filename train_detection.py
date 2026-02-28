@@ -10,16 +10,16 @@ from src.data.splitter import DataSplitter
 VIDEO_PATH = "data/AICity_data/AICity_data/train/S03/c010/vdo.avi"
 XML_PATH = "data/gt/ai_challenge_s03_c010-full_annotation.xml"
 SAVE_DIR = "models"
-BATCH_SIZE = 8 # YOLO can handle larger batches usually
+BATCH_SIZE = 4 # YOLO can handle larger batches usually
 NUM_EPOCHS = 5
-SPLIT_STRATEGY = 'A' 
-MODEL = 'yolo'  # or 'rcnn'
+SPLIT_STRATEGY = 'A'
+MODEL = 'rcnn'  # or 'yolo'
 
 def main():
     # 1. Load Data
     full_dataset = AICityDataset(video_path=VIDEO_PATH, xml_path=XML_PATH)
-    
-    # 2. Split Data (Task 1.3  -Strategy B)
+
+    # 2. Split Data
     splitter = DataSplitter(full_dataset)
     train_idx, val_idx = splitter.get_split(strategy=SPLIT_STRATEGY, k=4)
 
@@ -27,27 +27,27 @@ def main():
     if MODEL == 'yolo':
         print("--- Mode: YOLOv8 Fine-Tuning ---")
         detector = YOLO8FineTuned()
-        
+
         # YOLO handles its own loop and data loading
         detector.prepare_and_train(
-            dataset=full_dataset, 
-            train_indices=train_idx, 
+            dataset=full_dataset,
+            train_indices=train_idx,
             val_indices=val_idx,
-            epochs=NUM_EPOCHS, 
+            epochs=NUM_EPOCHS,
             batch_size=BATCH_SIZE
         )
-        
+
         # Save mechanism is handled by Ultralytics (saved to models/yolo_finetuned/weights/best.pt)
         print(f"Best YOLO model saved to models/yolo_finetuned/weights/best.pt")
 
-    else:
+    elif MODEL == 'rcnn':
         print("--- Mode: Faster R-CNN Fine-Tuning ---")
         # Standard PyTorch Loop for R-CNN
         device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        
+
         train_sub = torch.utils.data.Subset(full_dataset, train_idx)
         train_loader = torch.utils.data.DataLoader(
-            train_sub, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn
+            train_sub, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, collate_fn=collate_fn
         )
 
         detector = FineTunedDetector()
