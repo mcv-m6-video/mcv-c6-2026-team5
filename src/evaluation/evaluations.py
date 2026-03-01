@@ -6,25 +6,35 @@ import numpy as np
 import os
 
 def evaluate(detector, dataloader, save_video=False):
-    metric = MeanAveragePrecision()
-    print("Running inference...")
-    h, w = dataloader.dataset[0][0].shape[1:]  # Get height and width from the first image
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    metric = MeanAveragePrecision().to(device) 
+    detector.model.to(device)    
+    detector.model.eval()
+    
+    print(f"Running inference on {device}...")
+    
+    # video setup
     if save_video:
+        h, w = dataloader.dataset[0][0].shape[1:]  # Get height and width from the first image
         import cv2
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(save_video, fourcc, 10, (w, h))
     
     for batch_images, batch_targets in tqdm(dataloader):
+        batch_images = [img.to(device) for img in batch_images]
+        targets_gpu = [{k: v.to(device) for k, v in t.items()} for t in batch_targets]     
         # Predict
-        preds = detector.predict(batch_images)
-        tensor_preds = [{k: torch.tensor(v) for k, v in p.items()} for p in preds]
-        # Format for TorchMetrics (needs dicts)
-        # Preds are already list of dicts from our BaseDetector
-        # Targets need to be moved to CPU for metric calculation
-        target_cpu = [{k: v.cpu() for k, v in t.items()} for t in batch_targets]
-        
-        metric_targets = [{k: v.cpu() for k, v in t.items()} for t in batch_targets]
-        metric.update(tensor_preds, target_cpu)
+        with torch.no_grad():
+            preds = detector.model(batch_images)
+        # preds = detector.predict(batch_images)
+        tensor_preds = []
+        for p in preds:
+            # filter out low confidence predictions (optional, can be adjusted based on your needs)
+            keep = p['scores'] > 0.05 
+            tensor_preds.append({k: v[keep] for k, v in p.items()})
+        # tensor_preds = [{k: torch.tensor(v) for k, v in p.items()} for p in tensor_preds]
+
+        metric.update(tensor_preds, targets_gpu)
         if save_video:
             # Initialize Video Writer once we know the image size
             if out is None:
@@ -67,30 +77,44 @@ def evaluate(detector, dataloader, save_video=False):
         out.release()
     return result['map_50']
                 
-                
-def save_training_plots(history, save_dir):
-    epochs = range(1, len(history['train_loss']) + 1)
+def save_training_plots(all_folds_history, save_dir):
+    epochs = range(1, len(all_folds_history['train_loss']) + 1)
+    # print(all_folds_history)
     
+    # Convert list of dicts to numpy arrays [folds, epochs]
+    
+    train_losses = all_folds_history['train_loss']
+    val_maps = all_folds_history['val_map50']
+
+    # Calculate statistics
+    mean_loss = np.mean(train_losses, axis=0)
+    std_loss = np.std(train_losses, axis=0)
+    mean_map = np.mean(val_maps, axis=0)
+    std_map = np.std(val_maps, axis=0)
+
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot Loss on the left Y-axis
+    # Plot Loss
     color = 'tab:red'
     ax1.set_xlabel('Epochs')
     ax1.set_ylabel('Train Loss', color=color)
-    ax1.plot(epochs, history['train_loss'], color=color, marker='o', label='Loss')
+    ax1.plot(epochs, mean_loss, color=color, marker='o', label='Mean Loss')
+    ax1.fill_between(epochs, mean_loss - std_loss, mean_loss + std_loss, color=color, alpha=0.2)
     ax1.tick_params(axis='y', labelcolor=color)
 
-    # Create a twin axis for mAP@50 on the right Y-axis
+    # Plot mAP@50
     ax2 = ax1.twinx()
     color = 'tab:blue'
     ax2.set_ylabel('Val mAP@50', color=color)
-    ax2.plot(epochs, history['val_map50'], color=color, marker='s', label='mAP@50')
+    ax2.plot(epochs, mean_map, color=color, marker='s', label='Mean mAP@50')
+    ax2.fill_between(epochs, mean_map - std_map, mean_map + std_map, color=color, alpha=0.2)
     ax2.tick_params(axis='y', labelcolor=color)
 
-    plt.title('Training Loss and Validation mAP@50')
+    plt.title(f'Cross-Validation Metrics (Mean ± Std over {len(all_folds_history)} folds)')
     fig.tight_layout()
     
-    plot_path = os.path.join(save_dir, "training_metrics.png")
+    os.makedirs(save_dir, exist_ok=True)
+    plot_path = os.path.join(save_dir, "cv_training_metrics.png")
     plt.savefig(plot_path)
-    print(f"Plot saved to {plot_path}")
+    print(f"Aggregated plot saved to {plot_path}")
     plt.show()

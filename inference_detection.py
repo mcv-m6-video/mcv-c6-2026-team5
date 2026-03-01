@@ -4,7 +4,6 @@ from src.data.loader import AICityDataset, collate_fn
 from src.detection.off_the_shelf import FasterRCNNOffTheShelf, YoloOffTheShelfDetector
 from src.detection.fine_tuned import FineTunedDetector
 from src.evaluation.evaluations import evaluate
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
 from tqdm import tqdm
 import numpy as np
 

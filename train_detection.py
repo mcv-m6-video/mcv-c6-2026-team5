@@ -17,6 +17,7 @@ SAVE_DIR = "models"
 BATCH_SIZE = 32 # YOLO can handle larger batches usually
 NUM_EPOCHS = 15
 SPLIT_STRATEGY = 'A'
+FOLDS = 4
 MODEL = 'rcnn'  # or 'yolo'
 
 def main():
@@ -26,81 +27,82 @@ def main():
     # 2. Split Data
     splitter = DataSplitter(len_dataset)
     # print([train, val for train, val in splitter.get_split(strategy=SPLIT_STRATEGY, k=4)])
-    train_idx, val_idx = [(train, val) for train, val in splitter.get_split(strategy=SPLIT_STRATEGY, k=4)][0]
+    # train_idx, val_idx = [(train, val) for train, val in splitter.get_split(strategy=SPLIT_STRATEGY, k=4)][0]
+    
+    # metrics
+    all_folds_history = []
+    best_map = 0
+    for i, (train_idx, val_idx) in enumerate(splitter.get_split(strategy=SPLIT_STRATEGY, k=FOLDS)):
+        print(f"Fold {i+1} - Train: {len(train_idx)} samples | Val: {len(val_idx)} samples")
+        # 3. Initialize Model
+        if MODEL == 'yolo':
+            print("--- Mode: YOLOv8 Fine-Tuning ---")
+            detector = YOLO8FineTuned()
 
+            # YOLO handles its own loop and data loading
+            detector.prepare_and_train(
+                dataset=full_dataset,
+                train_indices=train_idx,
+                val_indices=val_idx,
+                epochs=NUM_EPOCHS,
+                batch_size=BATCH_SIZE
+            )
 
-    # 3. Initialize Model
-    if MODEL == 'yolo':
-        print("--- Mode: YOLOv8 Fine-Tuning ---")
-        detector = YOLO8FineTuned()
+            # Save mechanism is handled by Ultralytics (saved to models/yolo_finetuned/weights/best.pt)
+            print(f"Best YOLO model saved to models/yolo_finetuned/weights/best.pt")
 
-        # YOLO handles its own loop and data loading
-        detector.prepare_and_train(
-            dataset=full_dataset,
-            train_indices=train_idx,
-            val_indices=val_idx,
-            epochs=NUM_EPOCHS,
-            batch_size=BATCH_SIZE
-        )
-
-        # Save mechanism is handled by Ultralytics (saved to models/yolo_finetuned/weights/best.pt)
-        print(f"Best YOLO model saved to models/yolo_finetuned/weights/best.pt")
-
-    elif MODEL == 'rcnn':
-        print("--- Mode: Faster R-CNN Fine-Tuning ---")
-        # Standard PyTorch Loop for R-CNN
-        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        print(f"Using device: {device}")
-        train_sub = torch.utils.data.Subset(full_dataset, train_idx)
-        val_sub = torch.utils.data.Subset(full_dataset, val_idx)
-        
-        train_loader = torch.utils.data.DataLoader(
-            train_sub, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, collate_fn=collate_fn
-        )
-        val_loader = torch.utils.data.DataLoader(
-            val_sub, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, collate_fn=collate_fn
-        )
-        
-        history = {
-            'train_loss': [],
-            'val_map50': []
-        }
-
-        detector = FineTunedDetector()
-        detector.model.to(device)
-        detector.model.train()
-
-        params = [p for p in detector.model.parameters() if p.requires_grad]
-        optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
-        print("Starting training...")
-        for epoch in range(NUM_EPOCHS):
-            epoch_loss = 0
-            for images, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
-                loss = detector.train_step(images, targets, optimizer)
-                epoch_loss += loss            
-            avg_train_loss = epoch_loss / len(train_loader)
-            history['train_loss'].append(avg_train_loss)
-
-            # 4. Validation Step (mAP@50)
-            detector.model.eval()
-            all_maps = []
-            with torch.no_grad():
-                # for images, targets in tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]"):
-                #     images = [img.to(device) for img in images]
-                #     outputs = detector.model(images)
-                #     # Use your mAP utility here
-                #     mAP = evaluate(detector, val_loader, save_video=False) 
-                #     all_maps.append(mAP)
-                print("Evaluating on validation set...")
-                mAP = evaluate(detector, val_loader, save_video=False) 
-            # avg_val_map = np.mean(all_maps) if all_maps else (0.1 + epoch*0.04) # Mocking progress
-            history['val_map50'].append(mAP)
+        elif MODEL == 'rcnn':
+            print("--- Mode: Faster R-CNN Fine-Tuning ---")
+            # Standard PyTorch Loop for R-CNN
+            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+            print(f"Using device: {device}")
+            train_sub = torch.utils.data.Subset(full_dataset, train_idx)
+            val_sub = torch.utils.data.Subset(full_dataset, val_idx)
             
-            print(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f} | mAP@50: {mAP:.4f}")
+            train_loader = torch.utils.data.DataLoader(
+                train_sub, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, collate_fn=collate_fn
+            )
+            val_loader = torch.utils.data.DataLoader(
+                val_sub, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn
+            )
+            
+            history = {
+                'train_loss': [],
+                'val_map50': []
+            }
 
-        save_training_plots(history, SAVE_DIR)
+            detector = FineTunedDetector()
+            detector.model.to(device)
+            detector.model.train()
+
+            params = [p for p in detector.model.parameters() if p.requires_grad]
+            optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
+            print("Starting training...")
+            for epoch in range(NUM_EPOCHS):
+                epoch_loss = 0
+                for images, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
+                    loss = detector.train_step(images, targets, optimizer)
+                    epoch_loss += loss            
+                avg_train_loss = epoch_loss / len(train_loader)
+                history['train_loss'].append(avg_train_loss)
+
+                # 4. Validation Step (mAP@50)
+                detector.model.eval()
+                all_maps = []
+                with torch.no_grad():
+                    print("Evaluating on validation set...")
+                    mAP = evaluate(detector, val_loader, save_video=False) 
+                # avg_val_map = np.mean(all_maps) if all_maps else (0.1 + epoch*0.04) # Mocking progress
+                history['val_map50'].append(mAP)
+                
+                print(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f} | mAP@50: {mAP:.4f}")
+
+            all_folds_history.append(history)
+            save_training_plots(history, SAVE_DIR)
+
         # Save manually
-        torch.save(detector.model.state_dict(), f"{SAVE_DIR}/fine_tuned_rcnn.pth")
+        
+        torch.save(detector.model.state_dict(), f"{SAVE_DIR}/fine_tuned_rcnn_fold_{i}.pth")
 
 if __name__ == "__main__":
     main()
