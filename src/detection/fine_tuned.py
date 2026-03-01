@@ -12,8 +12,8 @@ class FineTunedDetector(BaseDetector):
         print("Initializing Faster R-CNN for Fine-Tuning...")
         
         # 1. Load the pre-trained model (trained on COCO)
+        print("Loading rcnn")
         model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
-
         # 2. Freeze the backbone layers
         # We don't want to destroy the features learned from ImageNet/COCO.
         for param in model.backbone.parameters():
