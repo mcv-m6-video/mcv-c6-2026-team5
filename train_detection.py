@@ -10,14 +10,26 @@ from src.detection.fine_tuned import FineTunedDetector, YOLO8FineTuned
 from src.data.splitter import DataSplitter
 from src.evaluation.evaluations import save_training_plots, evaluate
 
+
+# arg parser
+parser = argparse.ArgumentParser(description="Train Object Detection Model on AICity Dataset")
+# epochs
+parser.add_argument('--epochs', type=int, default=15, help='Number of training epochs')
+# batch size
+parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training')
+# folds
+parser.add_argument('--folds', type=int, default=4, help='Number of folds for cross-validation')
+# split strategy
+parser.add_argument('--split_strategy', type=str, default='B', choices=['A', 'B', 'C'], help='Data splitting strategy: A (random) or B (sequential)')
+
 # --- CONFIGURATION ---
 VIDEO_PATH = "data/AICity_data/AICity_data/train/S03/c010/vdo.avi"
 XML_PATH = "data/gt/ai_challenge_s03_c010-full_annotation.xml"
 SAVE_DIR = "models"
-BATCH_SIZE = 32 # YOLO can handle larger batches usually
-NUM_EPOCHS = 15
-SPLIT_STRATEGY = 'A'
-FOLDS = 4
+BATCH_SIZE = parser.parse_args().batch_size # YOLO can handle larger batches usually
+NUM_EPOCHS = parser.parse_args().epochs
+SPLIT_STRATEGY = parser.parse_args().split_strategy
+FOLDS = parser.parse_args().folds
 MODEL = 'rcnn'  # or 'yolo'
 
 def main():
@@ -68,6 +80,7 @@ def main():
             
             history = {
                 'train_loss': [],
+                'val_loss': [],
                 'val_map50': []
             }
 
@@ -79,30 +92,42 @@ def main():
             optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
             print("Starting training...")
             for epoch in range(NUM_EPOCHS):
-                epoch_loss = 0
+                epoch_train_loss = 0
                 for images, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
                     loss = detector.train_step(images, targets, optimizer)
-                    epoch_loss += loss            
-                avg_train_loss = epoch_loss / len(train_loader)
+                    epoch_train_loss += loss            
+                avg_train_loss = epoch_train_loss / len(train_loader)
                 history['train_loss'].append(avg_train_loss)
 
                 # 4. Validation Step (mAP@50)
-                detector.model.eval()
+                detector.model.train() # train to output loss
                 all_maps = []
+                epoch_val_loss = 0
                 with torch.no_grad():
+                    for images, targets in tqdm(val_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Val Loss]"):
+                        # Move to device
+                        images = [img.to(device) for img in images]
+                        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+                        
+                        # Model returns a dict of losses in train mode
+                        loss_dict = detector.model(images, targets)
+                        losses = sum(loss for loss in loss_dict.values())
+                        epoch_val_loss += losses.item()
                     print("Evaluating on validation set...")
                     mAP = evaluate(detector, val_loader, save_video=False) 
                 # avg_val_map = np.mean(all_maps) if all_maps else (0.1 + epoch*0.04) # Mocking progress
+                avg_val_loss = epoch_val_loss / len(val_loader)
+                history['val_loss'].append(avg_val_loss)    
                 history['val_map50'].append(mAP)
                 
                 print(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f} | mAP@50: {mAP:.4f}")
 
             all_folds_history.append(history)
-            save_training_plots(history, SAVE_DIR)
 
         # Save manually
         
-        torch.save(detector.model.state_dict(), f"{SAVE_DIR}/fine_tuned_rcnn_fold_{i}.pth")
+        torch.save(detector.model.state_dict(), f"{SAVE_DIR}/fine_tuned_rcnn_fold_{i}_strat_{SPLIT_STRATEGY}.pth")
+    save_training_plots(all_folds_history, f"{SAVE_DIR}/training_plots_strat_{SPLIT_STRATEGY}")
 
 if __name__ == "__main__":
     main()
