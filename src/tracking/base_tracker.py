@@ -1,26 +1,20 @@
 from abc import ABC, abstractmethod
 
 class BaseTracker(ABC):
-    """
-    Abstract class for Task 2.1 (Overlap) and Task 2.2 (Kalman).
-    """
-    
     def __init__(self):
-        self.tracks = [] # List of active track objects
-        self.frame_count = 0
+        self.next_track_id = 1
+        self.active_tracks = []
 
     @abstractmethod
     def update(self, detections):
         """
-        Core logic:
-        1. Receive detections from the current frame.
-        2. Match them to existing tracks (Association).
-        3. Create new tracks or kill old ones.
+        Updates the tracker with the detections from the current frame.
         
         Args:
-            detections: List of boxes [[x1, y1, x2, y2, score], ...]
+            detections (list or np.ndarray): A list of bounding boxes for the current frame
+                                             in format [x1, y1, x2, y2].
+                                             
         Returns:
-            active_tracks: List of objects with assigned IDs.
+            list of dicts: The updated active tracks containing 'id' and 'bbox'.
         """
         pass
-    

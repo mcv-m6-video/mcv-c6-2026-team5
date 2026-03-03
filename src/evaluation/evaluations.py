@@ -1,9 +1,12 @@
 import matplotlib.pyplot as plt
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
+from src.detection.off_the_shelf import YoloOffTheShelfDetector, FasterRCNNOffTheShelf
+from src.detection.fine_tuned import FineTunedDetector
 from tqdm import tqdm
 import torch
 import numpy as np
 import os
+from time import time
 
 def evaluate(detector, dataloader, save_video=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -19,19 +22,47 @@ def evaluate(detector, dataloader, save_video=False):
         import cv2
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(save_video, fourcc, 10, (w, h))
-    
+    total_inference_time = 0.0
     for batch_images, batch_targets in tqdm(dataloader):
         batch_images = [img.to(device) for img in batch_images]
-        targets_gpu = [{k: v.to(device) for k, v in t.items()} for t in batch_targets]     
-        # Predict
+        metric_targets = [{k: v.cpu() for k, v in t.items()} for t in batch_targets]
+        targets_gpu = [{k: v.to(device) for k, v in t.items()} for t in batch_targets] 
+        # if model is yolo
+        start = time()
         with torch.no_grad():
-            preds = detector.model(batch_images)
+            # if isinstance(detector, YoloOffTheShelfDetector):    
+            #     # We use the predict method to get results in our common format
+            #     preds = detector.predict(batch_images)
+            # else:
+            # Predict
+            preds = detector.predict(batch_images)
+        total_inference_time += time() - start
         # preds = detector.predict(batch_images)
         tensor_preds = []
         for p in preds:
             # filter out low confidence predictions (optional, can be adjusted based on your needs)
             keep = p['scores'] > 0.05 
-            tensor_preds.append({k: v[keep] for k, v in p.items()})
+            boxes = p['boxes'][keep]
+            scores = p['scores'][keep]
+            labels = p['labels'][keep]
+            
+            is_coco_vehicle = (labels == 3) | (labels == 4) | (labels == 6) | (labels == 8)
+            is_already_class_1 = (labels == 1)
+            
+            valid_mask = is_coco_vehicle | is_already_class_1
+            
+            # Apply mask to keep only vehicles
+            final_boxes = torch.tensor(boxes[valid_mask]).to(device)
+            final_scores = torch.tensor(scores[valid_mask]).to(device)
+            
+            # Force all labels to Class 1 to match AICityDataset Ground Truth
+            final_labels = torch.ones_like(final_scores, dtype=torch.int64)
+
+            tensor_preds.append({
+                'boxes': final_boxes,
+                'scores': final_scores,
+                'labels': final_labels
+            })
         # tensor_preds = [{k: torch.tensor(v) for k, v in p.items()} for p in tensor_preds]
 
         metric.update(tensor_preds, targets_gpu)
@@ -53,6 +84,8 @@ def evaluate(detector, dataloader, save_video=False):
                 # -- Draw Predictions (Green) --
                 current_preds = preds[i]
                 for box, score in zip(current_preds['boxes'], current_preds['scores']):
+                    if type(detector) == FasterRCNNOffTheShelf or type(detector) == FineTunedDetector:
+                        box = box.cpu().numpy()
                     x1, y1, x2, y2 = box.astype(int)
                     
                     # Draw Box
@@ -75,46 +108,73 @@ def evaluate(detector, dataloader, save_video=False):
     result = metric.compute()
     if save_video:
         out.release()
+    print(f"Total Inference Time: {total_inference_time:.2f} seconds")
     return result['map_50']
                 
 def save_training_plots(all_folds_history, save_dir):
-    epochs = range(1, len(all_folds_history['train_loss']) + 1)
-    # print(all_folds_history)
+    epochs = range(1, len(all_folds_history[0]['train_loss']) + 1)
     
-    # Convert list of dicts to numpy arrays [folds, epochs]
-    
-    train_losses = all_folds_history['train_loss']
-    val_maps = all_folds_history['val_map50']
+    # Extract data [folds, epochs]
+    train_losses = np.array([[float(l) for l in h['train_loss']] for h in all_folds_history])
+    val_losses = np.array([[float(l) for l in h['val_loss']] for h in all_folds_history])
+    val_maps = np.array([[float(m) for m in h['val_map50']] for h in all_folds_history])
 
     # Calculate statistics
-    mean_loss = np.mean(train_losses, axis=0)
-    std_loss = np.std(train_losses, axis=0)
+    mean_train_loss = np.mean(train_losses, axis=0)
+    std_train_loss = np.std(train_losses, axis=0)
+    
+    mean_val_loss = np.mean(val_losses, axis=0)
+    std_val_loss = np.std(val_losses, axis=0)
+    
     mean_map = np.mean(val_maps, axis=0)
     std_map = np.std(val_maps, axis=0)
 
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    # Plot Loss
-    color = 'tab:red'
-    ax1.set_xlabel('Epochs')
-    ax1.set_ylabel('Train Loss', color=color)
-    ax1.plot(epochs, mean_loss, color=color, marker='o', label='Mean Loss')
-    ax1.fill_between(epochs, mean_loss - std_loss, mean_loss + std_loss, color=color, alpha=0.2)
-    ax1.tick_params(axis='y', labelcolor=color)
-
-    # Plot mAP@50
-    ax2 = ax1.twinx()
-    color = 'tab:blue'
-    ax2.set_ylabel('Val mAP@50', color=color)
-    ax2.plot(epochs, mean_map, color=color, marker='s', label='Mean mAP@50')
-    ax2.fill_between(epochs, mean_map - std_map, mean_map + std_map, color=color, alpha=0.2)
-    ax2.tick_params(axis='y', labelcolor=color)
-
-    plt.title(f'Cross-Validation Metrics (Mean ± Std over {len(all_folds_history)} folds)')
-    fig.tight_layout()
-    
     os.makedirs(save_dir, exist_ok=True)
-    plot_path = os.path.join(save_dir, "cv_training_metrics.png")
-    plt.savefig(plot_path)
-    print(f"Aggregated plot saved to {plot_path}")
-    plt.show()
+
+    # ==========================================
+    # PLOT 1: Train & Val Losses
+    # ==========================================
+    plt.figure(figsize=(8, 6))
+    
+    # Train Loss
+    plt.plot(epochs, mean_train_loss, color='tab:red', marker='o', label='Train Loss')
+    plt.fill_between(epochs, mean_train_loss - std_train_loss, mean_train_loss + std_train_loss, color='tab:red', alpha=0.2)
+    
+    # Val Loss
+    plt.plot(epochs, mean_val_loss, color='tab:orange', marker='^', linestyle='--', label='Val Loss')
+    plt.fill_between(epochs, mean_val_loss - std_val_loss, mean_val_loss + std_val_loss, color='tab:orange', alpha=0.2)
+    
+    plt.title(f'Cross-Validation Loss\n(Mean ± Std over {len(all_folds_history)} folds)')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(loc='upper right')
+    plt.tight_layout()
+    
+    loss_plot_path = os.path.join(save_dir, "cv_losses.png")
+    plt.savefig(loss_plot_path, facecolor='white', transparent=False)
+    plt.close() # Close figure to avoid memory leaks
+
+    # ==========================================
+    # PLOT 2: Validation mAP@50
+    # ==========================================
+    plt.figure(figsize=(8, 6))
+    
+    # Val mAP@50
+    plt.plot(epochs, mean_map, color='tab:blue', marker='s', label='Val mAP@50')
+    plt.fill_between(epochs, mean_map - std_map, mean_map + std_map, color='tab:blue', alpha=0.2)
+    
+    plt.title(f'Cross-Validation mAP@50\n(Mean ± Std over {len(all_folds_history)} folds)')
+    plt.xlabel('Epochs')
+    plt.ylabel('mAP@50')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(loc='lower right')
+    plt.tight_layout()
+    
+    map_plot_path = os.path.join(save_dir, "cv_map50.png")
+    plt.savefig(map_plot_path, facecolor='white', transparent=False)
+    plt.close() # Close figure
+
+    print(f"\nPlots saved successfully:")
+    print(f" - Losses: {loss_plot_path}")
+    print(f" - mAP@50: {map_plot_path}")
