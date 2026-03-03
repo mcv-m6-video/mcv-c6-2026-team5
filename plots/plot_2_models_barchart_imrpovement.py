@@ -93,7 +93,7 @@ def plot_improvement():
     # 5. Final Aesthetics
     ax.set_ylabel(METRIC_LABEL)
     ax.set_title(TITLE, pad=20, fontweight='bold')
-    ax.set_ylim(0, max(values) * 1.25) # Add headroom for labels
+    ax.set_ylim(0, 1) # Add headroom for labels
     
     # Add grid behind bars
     ax.grid(axis='y', linestyle='--', alpha=0.3)
