@@ -8,11 +8,17 @@ __pycache__/
 *.gif
 *.mp4
 *.jpg
+# models
+*.pth
+*.pt
 # uv astral things
 .python-version
 pyproject.toml
 uv.lock
 /data
+/logs
+/trackeval
+/evaluatins_ws
 # Ignore the .env file if it exists
 .env
 # ignore finished week1

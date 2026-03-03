@@ -8,13 +8,13 @@ map_B = [0.9779, 0.9838, 0.9286, 0.9365]
 map_C = [0.9851, 0.9913, 0.9843, 0.9852]
 
 data = [map_A, map_B, map_C]
-labels = ['Strategy A\n(Static Split)', 'Strategy B\n(Block K-Fold)', 'Strategy C\n(Random K-Fold)']
+labels = ['Strategy A', 'Strategy B', 'Strategy C']
 
 # --- 2. Plot Setup ---
 fig, ax = plt.subplots(figsize=(10, 7))
 
 # Create boxplot
-box_colors = ['#cccccc', '#1f77b4', '#ff7f0e']
+box_colors = ['#cccccc', '#1f77b4', "#934DAF"]
 bplot = ax.boxplot(data, patch_artist=True, labels=labels, 
                    widths=0.5, medianprops=dict(color="black", linewidth=2.5))
 

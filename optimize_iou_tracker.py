@@ -4,7 +4,7 @@ import numpy as np
 import argparse
 from tqdm import tqdm
 
-# --- Your Project Imports ---
+# --- Project Imports ---
 from src.tracking.iou_tracker import MaxIoUTracker
 from src.evaluation import calculate_tracking_metrics
 
@@ -22,7 +22,7 @@ def objective(trial):
     # 1. Suggest Parameters
     conf_thresh = trial.suggest_float("conf_thresh", 0.3, 0.95, step=0.05)
     iou_thresh = trial.suggest_float("iou_thresh", 0.1, 0.7, step=0.05)
-    max_age = trial.suggest_int("max_age", 1, 30)
+    max_age = trial.suggest_int("max_age", 0, 30)
 
     # 2. Initialize Tracker
     tracker = MaxIoUTracker(iou_threshold=iou_thresh, max_age=max_age)
@@ -59,7 +59,7 @@ def objective(trial):
     # 4. Calculate Score
     try:
         metrics = calculate_tracking_metrics(ALL_GT, preds_for_eval)
-        # You can maximize HOTA, IDF1, or a combination (e.g. 0.5*HOTA + 0.5*IDF1)
+        # maximize HOTA, IDF1, or a combination (e.g. 0.5*HOTA + 0.5*IDF1)
         return metrics['IDF1']*0.5 + metrics['HOTA']*0.5
         # return metrics['IDF1']
     except Exception as e:
