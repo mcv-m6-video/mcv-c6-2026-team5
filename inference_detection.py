@@ -8,6 +8,7 @@ from src.data.splitter import DataSplitter
 from tqdm import tqdm
 import numpy as np
 
+
 def main():
     # parser
     parser = argparse.ArgumentParser(description="Inference and Evaluation for Object Detection on AICity Dataset")
@@ -21,12 +22,14 @@ def main():
     parser.add_argument('--save_video', type=str, default="results/inference.mp4", help='Path to save inference visualization video. Set to False to skip saving video.')
     # mode
     parser.add_argument('--mode', type=str, default='fine-tuned', choices=['yolo-off-shelf', 'faster-rcnn-off-shelf', 'fine-tuned'], help='Inference mode: yolo-off-shelf, faster-rcnn-off-shelf, or fine-tuned')
+    parser.add_argument('--weights', type=str, default='models/fine_tuned_rcnn.pth', help='Path to the weights file for the fine-tuned model (only used if mode is fine-tuned)')
+
     args = parser.parse_args()
-    MODE = 'faster-rcnn-off-shelf'  # or 'fine-tuned'
+    MODE = 'yolo-off-shelf'  # or 'fine-tuned'
     MODE = 'fine-tuned'
     MODE = args.mode
-    WEIGHTS = "models/fine_tuned_rcnn.pth"  # Path to fine-tuned weights if using that mode
-    OUTPUT_VIDEO = "results/inference.mp4"  # Path to save inference visualization video False to skip saving video
+    WEIGHTS = args.weights  # Path to fine-tuned weights if using that mode
+    OUTPUT_VIDEO = "results/inference_yolo.mp4"  # Path to save inference visualization video False to skip saving video
     if args.save_video.lower() == 'false':
         OUTPUT_VIDEO = False
     else:
@@ -50,6 +53,7 @@ def main():
     
     # fold_idx = 0 if SPLIT_STRATEGY == 'A' else FOLD_TO_EVAL
     # _, val_idx = splits[fold_idx]
+    
     for fold_idx, (train_idx, val_idx) in enumerate(splitter.get_split(strategy=SPLIT_STRATEGY, k=FOLDS)):
 
         print(len(train_idx), len(val_idx))
@@ -63,6 +67,8 @@ def main():
         if MODE == 'yolo-off-shelf':
             print("Loading Off-the-Shelf Model...")
             detector = YoloOffTheShelfDetector()
+            
+            
         elif MODE == 'faster-rcnn-off-shelf':
             print("Loading Off-the-Shelf Faster R-CNN Model...")
             detector = FasterRCNNOffTheShelf()

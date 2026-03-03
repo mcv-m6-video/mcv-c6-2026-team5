@@ -22,11 +22,11 @@ class DataSplitter:
         elif strategy == 'B':
             # K-Fold without shuffle (blocks of video)
             kf = KFold(n_splits=k, shuffle=False)
-            for train_index, test_index in kf.split(self.indices):
+            for test_index, train_index  in kf.split(self.indices):
                 yield train_index, test_index
                 
         elif strategy == 'C':
             # K-Fold WITH shuffle (random frames)
             kf = KFold(n_splits=k, shuffle=True, random_state=42)
-            for train_index, test_index in kf.split(self.indices):
+            for test_index, train_index in kf.split(self.indices):
                 yield train_index, test_index

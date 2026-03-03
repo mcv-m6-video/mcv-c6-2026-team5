@@ -90,12 +90,18 @@ def main():
 
             params = [p for p in detector.model.parameters() if p.requires_grad]
             optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
+            lr_scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=3,
+                gamma=0.1
+            )
             print("Starting training...")
             for epoch in range(NUM_EPOCHS):
                 epoch_train_loss = 0
                 for images, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
                     loss = detector.train_step(images, targets, optimizer)
-                    epoch_train_loss += loss            
+                    epoch_train_loss += loss
+                lr_scheduler.step()            
                 avg_train_loss = epoch_train_loss / len(train_loader)
                 history['train_loss'].append(avg_train_loss)
 
