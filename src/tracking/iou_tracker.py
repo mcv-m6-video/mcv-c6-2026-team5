@@ -89,4 +89,4 @@ class MaxIoUTracker(BaseTracker): # class with max age implementation
         self.tracks = [t for t in self.tracks if t['age'] <= self.max_age]
 
         # Return format: List of objects with 'id' and 'bbox'
-        return [{'id': t['id'], 'bbox': t['bbox']} for t in self.tracks]
+        return [{'id': t['id'], 'bbox': t['bbox']} for t in self.tracks if t['age'] == 0] # Only return currently detected tracks (age=0)

@@ -163,7 +163,13 @@ class KalmanTracker(BaseTracker):
                     
                     # CHANGE: Use the Kalman State (Smoothed) instead of raw detection
                     # This visualizes the benefit of the filter
-                    t['bbox'] = t['kf'].convert_x_to_bbox(t['kf'].x)
+                    # t['bbox'] = t['kf'].convert_x_to_bbox(t['kf'].x)
+                    
+                    # Update internal Kalman state (keep this!)
+                    t['kf'].update(detections[c]) 
+
+                    # Output the raw, perfectly tight detection box to the evaluator
+                    t['bbox'] = detections[c]
                     
                     t['hits'] += 1
                     t['age'] = 0
@@ -198,6 +204,7 @@ class KalmanTracker(BaseTracker):
         # Return results
         ret = []
         for t in self.tracks:
-            ret.append({'id': t['id'], 'bbox': t['bbox']})
+            if t['age'] == 0: 
+                ret.append({'id': t['id'], 'bbox': t['bbox']})
             
         return ret

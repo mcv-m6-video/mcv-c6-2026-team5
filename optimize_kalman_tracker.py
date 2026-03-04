@@ -4,7 +4,7 @@ import numpy as np
 import argparse
 from tqdm import tqdm
 
-# --- Your Project Imports ---
+# --- Project Imports ---
 from src.tracking.kalman_tracker import KalmanTracker
 from src.evaluation import calculate_tracking_metrics
 
@@ -70,8 +70,8 @@ def objective(trial):
     try:
         metrics = calculate_tracking_metrics(ALL_GT, preds_for_eval)
         # You can maximize HOTA, IDF1, or a combination (e.g. 0.5*HOTA + 0.5*IDF1)
-        # return metrics['IDF1']*0.5 + metrics['HOTA']*0.5
-        return metrics['HOTA']
+        # return metrics['HOTA']
+        return metrics['IDF1']*0.5 + metrics['HOTA']*0.5
     except Exception as e:
         # If tracking fails (e.g. no tracks), return 0
         return 0.0
