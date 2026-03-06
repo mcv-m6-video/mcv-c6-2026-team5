@@ -21,5 +21,6 @@ uv.lock
 /evaluatins_ws
 # Ignore the .env file if it exists
 .env
-# ignore finished week1
+# ignore finished week1&week2
 week1
+week2
