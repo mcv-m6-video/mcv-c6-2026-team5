@@ -3,6 +3,7 @@ import cv2
 
 def read_kitti_flow(flow_path: str) -> tuple[np.ndarray, np.ndarray]:
     flow_image = cv2.imread(flow_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    print(flow_image.shape)
     flow_image = flow_image[:, :, ::-1].astype(np.float32)
     
     flow_u = (flow_image[:, :, 0] - 2**15) / 64.0

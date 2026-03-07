@@ -21,7 +21,7 @@ def compute_pyflow(img1: np.ndarray, img2: np.ndarray, mode: str = "default") ->
     else:
         raise ValueError("Mode must be 'default' or 'fast'.")
 
-    u, v, _ = pyflow.calcOpticalFlow(
+    u, v, _ = pyflow.coarse2fine_flow(
         img1_float, img2_float, alpha, ratio, minWidth, 
         nOuterFPIterations, nInnerFPIterations, nSORIterations, colType
     )
