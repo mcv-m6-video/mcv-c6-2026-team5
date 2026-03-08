@@ -15,7 +15,7 @@ from NeuFlow.neuflow import NeuFlow
 
 def initialize_neuflow(device: str = "cuda", half: bool = False, input_shape=(432, 768)):
     model = NeuFlow()
-    model_path = check_model("neuflow_mixed")
+    model_path = check_model("neuflow_mixed") #neuflow_things  or neuflow_sintel
     
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
     state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint

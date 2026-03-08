@@ -87,8 +87,8 @@ def evaluate_optical_flow(img1_path: str, img2_path: str, gt_path: str, save_hsv
     return results
 if __name__ == "__main__":
     kitti_dir = Path("data/data_stereo_flow/training/")
-    img1_path = str(kitti_dir / "image_0/000045_10.png")
-    img2_path = str(kitti_dir / "image_0/000045_11.png")
+    img1_path = str(kitti_dir / "colored_0/000045_10.png")
+    img2_path = str(kitti_dir / "colored_0/000045_11.png")
     gt_path = str(kitti_dir / "flow_noc/000045_10.png")
     print(f"image1: {img1_path}\nimage2: {img2_path}\ngt_image: {gt_path}")
 
