@@ -4,6 +4,7 @@ from pathlib import Path
 # from src.optical_flow.state_of_art_estimators import compute_neuflow
 
 def flow_to_hsv(flow: np.ndarray) -> np.ndarray:
+    flow = np.nan_to_num(flow)
     h, w = flow.shape[:2]
     hsv = np.zeros((h, w, 3), dtype=np.uint8)
     hsv[..., 1] = 255
