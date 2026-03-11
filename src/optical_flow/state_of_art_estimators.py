@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import torch
+import torch.nn.functional as F
 import numpy as np
 import cv2
 from src.optical_flow.utils import check_model, fuse_model_conv_and_bn
@@ -31,27 +32,32 @@ def initialize_neuflow(device: str = "cuda", half: bool = False, input_shape=(43
     model.init_bhwd(1, input_shape[0], input_shape[1], device, half)
     return model
 
-def compute_neuflow(model, img1: np.ndarray, img2: np.ndarray, device: str = "cuda", half=False) -> np.ndarray:
+def compute_neuflow(model, img1: torch.Tensor, img2: torch.Tensor, device: str = "cuda", half: bool = False) -> torch.Tensor:
     image_width = 768
     image_height = 432
-
-    img1_resized = cv2.resize(img1, (image_width, image_height))
-    img2_resized = cv2.resize(img2, (image_width, image_height))
-
-    img1_rgb = cv2.cvtColor(img1_resized, cv2.COLOR_BGR2RGB)
-    img2_rgb = cv2.cvtColor(img2_resized, cv2.COLOR_BGR2RGB)
     
-    
+    img1 = img1.to(device).float()
+    img2 = img2.to(device).float()
+
+    img1 = img1.permute(2, 0, 1).unsqueeze(0)
+    img2 = img2.permute(2, 0, 1).unsqueeze(0)
+
+    img1 = img1[:, [2, 1, 0], :, :]
+    img2 = img2[:, [2, 1, 0], :, :]
+
+    img1_resized = F.interpolate(img1, size=(image_height, image_width), mode='bilinear', align_corners=False)
+    img2_resized = F.interpolate(img2, size=(image_height, image_width), mode='bilinear', align_corners=False)
+
+    img1_t = img1_resized / 255.0
+    img2_t = img2_resized / 255.0
+
     if half:
-        img1_t = torch.from_numpy(img1_rgb / 255.0).permute(2, 0, 1).half().unsqueeze(0).to(device)
-        img2_t = torch.from_numpy(img2_rgb / 255.0).permute(2, 0, 1).half().unsqueeze(0).to(device)
-    else:
-        img1_t = torch.from_numpy(img1_rgb / 255.0).permute(2, 0, 1).float().unsqueeze(0).to(device)
-        img2_t = torch.from_numpy(img2_rgb / 255.0).permute(2, 0, 1).float().unsqueeze(0).to(device)
+        img1_t = img1_t.half()
+        img2_t = img2_t.half()
 
     with torch.inference_mode():
         flow_predictions = model(img1_t, img2_t)
 
-    flow = flow_predictions[-1][0].permute(1, 2, 0).cpu().float().numpy()
+    flow = flow_predictions[-1][0].permute(1, 2, 0)
     
     return flow

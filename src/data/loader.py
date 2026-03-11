@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 class AICityDataset(Dataset):
-    def __init__(self, video_path, xml_path, force_extract=False):
+    def __init__(self, video_path, xml_path, force_extract=False, easy_task=False):
         """
         Args:
             video_path (str): Path to the .mp4 or .avi file.
@@ -17,6 +17,7 @@ class AICityDataset(Dataset):
         """
         self.video_path = video_path
         self.xml_path = xml_path
+        self.easy_task = easy_task
         
         video_name = os.path.splitext(os.path.basename(video_path))[0]
         self.cache_dir = os.path.join(os.path.dirname(video_path), "frames_cache", video_name)
@@ -31,10 +32,12 @@ class AICityDataset(Dataset):
 
         self.imgs = list(sorted(os.listdir(self.cache_dir)))
         
+
         if self.xml_path.endswith('.txt'):
             self.ground_truth = self._load_gt_txt(self.xml_path)
         else:
             self.ground_truth = self._load_gt_xml(self.xml_path)
+            
 
     def _extract_frames(self):
         print(f"Extracting frames from {self.video_path} to {self.cache_dir}...")
@@ -96,7 +99,7 @@ class AICityDataset(Dataset):
                 
         return gt_boxes
 
-    def _load_gt_xml(self, xml_path, exclude_parked=True):
+    def _load_gt_xml(self, xml_path):
         if not os.path.exists(xml_path):
             print(f"Warning: GT file {xml_path} not found.")
             return defaultdict(list)
@@ -113,6 +116,11 @@ class AICityDataset(Dataset):
             for box in track.findall('box'):
                 if box.attrib.get('outside') == '1':
                     continue
+                if self.easy_task and box.attrib.get('occluded') == '1':
+                    continue
+                if self.easy_task and box.attrib.get('parked') == '1':
+                    continue
+
                 
                 frame_id = int(box.attrib['frame'])
                 
