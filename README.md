@@ -46,6 +46,13 @@ Implements optical flow estimation (PyFlow, RAFT, MaskFlowNet) and Multi-Target 
     * `of_tracker.py`: Enhanced tracking using optical flow to predict bounding box positions.
     * `run_mtsc_eval.py`: Evaluates the best tracking algorithms on the AI City Challenge dataset.
 
+### Week 4: Multi-Target Multi-Camera (MTMC) Tracking
+Extends tracking to global identities across multiple camera views using Re-Identification.
+* **Key Components**:
+    * `reid/`: Vision Transformer (ViT) based embedding extraction for vehicle matching.
+    * `mtmc_pipeline.py`: Pipeline for intra-camera tracking and inter-camera matching.
+    * `global_id_graph_matching.py`: Logic for resolving global IDs across the camera network.
+
 ## Execution Guide
 
 ### Object Detection Training (Week 2)
@@ -68,6 +75,11 @@ python evaluate_tracking.py --tracker kalman --conf_thresh 0.5 --iou_thresh 0.3 
 ### Optical Flow Evaluation (Week 3)
 Scripts in the `experiments/` directory allow for the computation of MSEN (Mean Square Error in Non-occluded areas) and PEPN (Percentage of Erroneous Pixels).
 
+### Running the MTMC Pipeline (Week 4)
+To run the full multi-camera tracking system on a sequence (e.g., S03):
+```bash
+python run_mtmc.py --config config.json
+```
 
 ## Data Management
 The project utilizes the following datasets:
