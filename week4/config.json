@@ -1,0 +1,25 @@
+{
+    "dataset_root": "data/AI_CITY_CHALLENGE_2022_TRAIN/train/S03",
+    "conf_thresh": 0.85,
+    "output_dir": "results/mtmc/",
+    "batch_size": 32,
+    "use_cache": true,
+    "embeding": {
+        "model": "reid/checkpoints_reid_cityflow/best.pt"
+    },
+    "detector": {
+        "_comment": "models/fine_tuned_rcnn_fold_0_strat_A_w_ocluded.pth",
+        "model": "/ghome/group05/maiol/mcv-c6-2026-team5/yolo_train/trained_models/yolo26_cityflow_best.pt" 
+    },
+    "tracker": {
+        "iou_thresh": 0.4,
+        "max_age": 14,
+        "alpha": 0.4
+    },
+    "vit": {
+        "device": "cuda"
+    },
+    "matching": {
+        "cosine_threshold": 0.1205
+    }
+}
