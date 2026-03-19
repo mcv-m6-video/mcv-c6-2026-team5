@@ -3,7 +3,6 @@ import torch
 import argparse
 import numpy as np
 from tqdm import tqdm
-from scipy.optimize import linear_sum_assignment # Added for FP matching
 
 # --- Your Project Imports ---
 from src.data.loader import AICityDataset
@@ -14,62 +13,8 @@ from src.tracking.optical_tracker import NeuFlowTracker
 from src.optical_flow.state_of_art_estimators import initialize_neuflow
 
 # --- Import the Metric Calculator ---
-from src.evaluation import calculate_tracking_metrics
+from src.evaluation import calculate_tracking_metrics, compute_fp_metrics
 
-def compute_fp_metrics(all_gt, all_preds, iou_thresh=0.5):
-    """
-    Computes exact False Positives, False Negatives, Precision, and Recall.
-    """
-    def bb_iou(boxA, boxB):
-        xA = max(boxA[0], boxB[0])
-        yA = max(boxA[1], boxB[1])
-        xB = min(boxA[2], boxB[2])
-        yB = min(boxA[3], boxB[3])
-        interArea = max(0, xB - xA) * max(0, yB - yA)
-        boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
-        boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
-        return interArea / float(boxAArea + boxBArea - interArea + 1e-6)
-
-    total_fp = 0
-    total_tp = 0
-    total_gt = 0
-    total_preds = 0
-
-    for gt_f, pred_f in zip(all_gt, all_preds):
-        gts = [g['bbox'] for g in gt_f]
-        preds = [p['bbox'] for p in pred_f]
-        
-        total_gt += len(gts)
-        total_preds += len(preds)
-
-        if len(gts) == 0:
-            total_fp += len(preds) # All predictions are FPs if no GT exists
-            continue
-        if len(preds) == 0:
-            continue
-
-        # Build IoU matrix
-        iou_matrix = np.zeros((len(gts), len(preds)))
-        for i, gt in enumerate(gts):
-            for j, p in enumerate(preds):
-                iou_matrix[i, j] = bb_iou(gt, p)
-
-        # Solve assignment using Hungarian algorithm
-        row_ind, col_ind = linear_sum_assignment(-iou_matrix)
-
-        matches = 0
-        for r, c in zip(row_ind, col_ind):
-            if iou_matrix[r, c] >= iou_thresh:
-                matches += 1
-
-        total_tp += matches
-        total_fp += (len(preds) - matches) # Leftover predictions are FPs
-
-    total_fn = total_gt - total_tp
-    precision = total_tp / total_preds if total_preds > 0 else 0
-    recall = total_tp / total_gt if total_gt > 0 else 0
-
-    return total_fp, total_fn, total_tp, precision, recall
 
 def main(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

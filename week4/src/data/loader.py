@@ -165,8 +165,8 @@ class AICityDataset(Dataset):
             target['labels'] = torch.zeros((0,), dtype=torch.int64)
             target['area'] = torch.zeros((0,), dtype=torch.float32)
             target['iscrowd'] = torch.zeros((0,), dtype=torch.int64)
-
-        return img_tensor, target
+        
+        return img_tensor, target, img
 
 def collate_fn(batch):
     return tuple(zip(*batch))
