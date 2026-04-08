@@ -1,40 +1,71 @@
-### Master in Computer Vision (Barcelona) 2025/26
-# Project 2 (Task 1) @ C6 - Video Analysis
+# Week 5: Action Spotting on SoccerNet
 
-This repository provides the starter code for Task 1 of Project 2: Action classification on the SoccerNet Ball Action Spotting 2025 (SN-BAS-2025) dataset.
+This folder contains the codebase for **Project 2: Sports Video Analysis**. The goal of this week is to perform Temporal Action Spotting on the **SoccerNet Ball Action Spotting** dataset, correctly predicting the timestamp and class of specific actions (Pass, Drive, Shot, etc.) from untrimmed video broadcasts.
 
-The installation of dependencies, how to obtain the dataset, and instructions on running the classification baseline are detailed next.
+## Checkpoints of Best Models
+* Access to this shared Drive folder for the best models: https://drive.google.com/drive/folders/1b0Fe95kcJf9bDk4NaBILYh-AnUrjxH9H?usp=drive_link
 
-## Dependencies
+## 📁 Repository Structure
 
-You can install the required packages for the project using the following command, with `requirements.txt` specifying the versions of the various packages:
+* `config/`: Contains JSON configuration files for different experiments (Baseline, Strides, Attention Pooling, Multiclip, RGB+Flow, etc.).
+* `data/` & `dataset/`: Dataloaders, dataset parsers, and splits management.
+* `model/`: PyTorch model architectures including Temporal Convolutional Networks (TCN) and different temporal heads.
+* `util/`: Helper functions for I/O, evaluation metrics (mAP, AP10), and dataset processing.
 
+## ⚙️ Setup and Data Preparation
+
+1. **Install Dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Download and Extract Data:**
+   We provide scripts to automatically download the dataset, extract RGB frames, and compute Optical Flow representations.
+   ```bash
+   python download_frames_snb.py
+   python extract_frames_snb.py
+   python extract_OF.py
+   ```
+
+3. **Exploratory Data Analysis (EDA):**
+   To check class imbalances and dataset statistics, run:
+   ```bash
+   python eda_soccernet.py --split train
+   ```
+
+## 🚀 Training & Evaluation
+
+The training pipeline is controlled via JSON configuration files. This allows for easily reproducible experiments without changing command-line arguments manually.
+
+**Train the Baseline Model:**
+```bash
+python main_classification.py --model baseline
 ```
-pip install -r requirements.txt
+
+**Train a Multi-Modal (RGB + Flow) Model:**
+```bash
+python main_classification_rgbflow.py --model rgbflow_tcn
 ```
 
-## Getting the dataset and data preparation
-
-Refer to the README files in the [data/soccernetball](/data/soccernetball) directory for instructions on how to download the SNABS2025 dataset, preparation of directories, and extraction of the video frames.
-
-
-## Running the baseline for Task 1
-
-The `main_classification.py` is designed to train and evaluate the baseline using the settings specified in a configuration file. You can run `main_classification.py` using the following command:
-
-```
-python3 main_classification.py --model <model_name>
+### Computing MACs & Parameters
+To evaluate the computational cost (Multiply-Accumulates and Params) of a specific model configuration:
+```bash
+python compute_macs.py --model baseline
+python compute_macs.py --model head_3layer_tcn
 ```
 
-Here, `<model_name>` can be chosen freely but must match the name of a configuration file (e.g. `baseline.json`) located in the config directory [config](/config/). For example, to chose the baseline model, you would run: `python3 main_classification.py --model baseline`.
+## 🎥 Qualitative Analysis (Video Generation)
 
-For additional details on configuration options using the configuration file, refer to the README in the [config](/config/) directory.
+We provide a robust script to generate side-by-side qualitative comparisons between models. It overlays the Ground Truth, Baseline predictions, and Best Model predictions directly onto the video frames.
 
-## Important notes
+**Generate random comparison clips:**
+```bash
+python qualitative_analysis_v2.py --model_base baseline --model_best head_3layer_tcn --num_clips 5
+```
 
-- Before running the model, ensure that you have downloaded the dataset frames and updated the directory-related configuration parameters in the relevant [config](/config/) files.
-- Make sure to run the `main_classification.py` with the `mode` parameter set to `store` at least once to generate the clips and save them. After this initial run, you can set the `mode` to `load` to reuse the same clips in subsequent executions.
-
-## Support
-
-For any issues related to the code, please email [aclapes@ub.edu](mailto:aclapes@ub.edu) and CC [arturxe@gmail.com](mailto:arturxe@gmail.com).
+**Smart Search for Improvements:**
+You can use the `--find_improvement` flag to automatically scan the dataset and generate clips *only* where your best model predicted the correct action, but the baseline failed. You can also filter by a specific target class.
+```bash
+# Find 3 clips where the best model correctly spots a "Shot" (Class 5) but the baseline fails
+python qualitative_analysis_v2.py --model_base baseline --model_best multiclip_max_BEST_s4 --target_class 5 --num_clips 3 --find_improvement
+```
