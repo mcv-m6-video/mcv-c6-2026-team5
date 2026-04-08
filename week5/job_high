@@ -1,0 +1,10 @@
+#!/bin/bash 
+#SBATCH -n 4                    # Number of cores
+#SBATCH --mem 20000             # 16GB asked
+#SBATCH -p mhigh                # Choose mlow to submit to master low prioriy queue
+#SBATCH -q masterhigh           # Requeue other users mlow jobs
+#SBATCH --gres gpu:1            # To ask Pascales MAX 8
+#SBATCH -o logs/log_%u_%j.out   # File to which STDOUT will be written
+#SBATCH -e logs/log_%u_%j.err   # File to which STDERR will be written
+
+python main_classification_rgbflow.py --model rgbflow_tcn

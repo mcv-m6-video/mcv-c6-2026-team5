@@ -1,0 +1,34 @@
+{
+    "frame_dir": "/ghome/group05/datasets/SoccerNet_Frames/398x224",
+    "save_dir": "/ghome/group05/datasets/SN-BAS-2025_savedata_tcn_4stride_maxpool_rny008_tempshift_multiclip",
+    "labels_dir": "/ghome/group05/datasets/SoccerNet/SN-BAS-2025",
+    "store_mode": "load",
+    "task": "classification",
+    "batch_size": 4,
+    "clip_len": 50,
+    "stride": 4,
+    "dataset": "soccernetball",
+    "epoch_num_frames": 500000,
+    "feature_arch": "rny008",
+    "learning_rate": 0.0008,
+    "num_classes": 12,
+    "num_epochs": 15,
+    "warm_up_epochs": 3,
+    "only_test": true,
+    "device": "cuda",
+    "num_workers": 0,
+
+    "temporal_head": "tcn_max_pool",
+    "tcn_num_layers": 3,
+    "tcn_kernel_size": 3,
+    "tcn_hidden_dim": null,
+    "tcn_dropout": 0.2,
+
+    "use_temporal_shift": true,
+    "temporal_shift_fold_div": 4,
+    
+    "multiclip_eval": true,
+    "multiclip_offsets": [-10, -5, 0, 5, 10],
+    "multiclip_aggregation": "max",
+    "checkpoint_path": "/ghome/group05/datasets/SN-BAS-2025_savedata_tcn_4stride_maxpool_rny008_tempshift/BEST_with_temp_shift/checkpoints/checkpoint_best.pt"
+}

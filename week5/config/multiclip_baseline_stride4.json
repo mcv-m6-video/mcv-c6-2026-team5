@@ -1,0 +1,25 @@
+{
+    "frame_dir": "/ghome/group05/datasets/SoccerNet_Frames/398x224",
+    "save_dir": "/ghome/group05/datasets/SN-BAS-2025_savedata",
+    "labels_dir": "/ghome/group05/datasets/SoccerNet/SN-BAS-2025",
+    "store_mode": "load",
+    "task": "classification",
+    "batch_size": 4,
+    "clip_len": 50,
+    "stride": 2,
+    "dataset": "soccernetball",
+    "epoch_num_frames": 500000,
+    "feature_arch": "rny002",
+    "learning_rate": 0.0008,
+    "num_classes": 12,
+    "num_epochs": 15,
+    "warm_up_epochs": 3,
+    "only_test": true,
+    "device": "cuda",
+    "num_workers": 0,
+
+    "multiclip_eval": true,
+    "multiclip_offsets": [-10, -5, 0, 5, 10],
+    "multiclip_aggregation": "mean",
+    "checkpoint_path": "/ghome/group05/datasets/SN-BAS-2025_savedata_stride4/baseline_stride4/checkpoints/checkpoint_best.pt"
+}

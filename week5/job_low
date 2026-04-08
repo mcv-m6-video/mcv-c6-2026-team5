@@ -1,0 +1,14 @@
+#!/bin/bash 
+#SBATCH -n 4                    # Number of cores
+#SBATCH --mem 24000             # 16GB asked
+#SBATCH -p mlow                # Choose mlow to submit to master low prioriy queue
+#SBATCH -o logs/log_%u_%j.out   # File to which STDOUT will be written
+#SBATCH -e logs/log_%u_%j.err   # File to which STDERR will be written
+
+python extract_OF.py \
+  --frames_root /ghome/group05/datasets/SoccerNet_Frames/398x224 \
+  --out_root /ghome/group05/datasets/SoccerNet_OF/398x224/stride5 \
+  --flow_stride 5 \
+  --rgb_sample_stride 2 \
+  --chunk_size 256 \
+  --clip_value 20.0

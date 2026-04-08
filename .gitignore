@@ -21,6 +21,13 @@ uv.lock
 /evaluatins_ws
 # Ignore the .env file if it exists
 .env
-# ignore finished week1&week2
+# ignore finished week1
 week1
-week2
+
+# from week5
+.idea/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+logs/
