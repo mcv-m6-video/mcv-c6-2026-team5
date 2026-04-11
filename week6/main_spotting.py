@@ -9,11 +9,17 @@ import torch
 import os
 import numpy as np
 import random
+import time  # <-- Added for timing
+import csv   # <-- Added for saving metrics to CSV
 from torch.optim.lr_scheduler import (
     ChainedScheduler, LinearLR, CosineAnnealingLR)
 import sys
 from torch.utils.data import DataLoader
 from tabulate import tabulate
+
+# WandB and Thop imports
+import wandb
+from thop import profile
 
 #Local imports
 from util.io import load_json, store_json
@@ -74,9 +80,18 @@ def main(args):
     config = load_json(config_path)
     args = update_args(args, config)
 
+    # --- Initialize wandb and log Configuration file ---
+    wandb.init(
+        project="C6-Spotting",
+        name=args.model,
+        config=config  # Automatically logs all parameters from the JSON
+    )
+    # ---------------------------------------------------
+
     # Directory for storing / reading model checkpoints
     ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
     os.makedirs(ckpt_dir, exist_ok=True)
+    os.makedirs(args.save_dir, exist_ok=True) # Ensure save_dir exists for CSVs
 
     # Get datasets train, validation (and validation for map -> Video dataset)
     classes, train_data, val_data, test_data = get_datasets(args)
@@ -108,6 +123,15 @@ def main(args):
     # Model
     model = Model(args=args)
 
+    # --- Calculate MACs and Parameters using thop ---
+    print("Calculating MACs and Parameters...")
+    dummy_input = torch.randn(1, args.clip_len, 3, 224, 398).to(args.device)
+    macs, params = profile(model._model, inputs=(dummy_input, ), verbose=False)
+    wandb.run.summary["MACs"] = macs
+    wandb.run.summary["Parameters"] = params
+    print(f"MACs: {macs / 1e9:.2f} G, Params: {params / 1e6:.2f} M")
+    # ------------------------------------------------
+
     optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
 
     if not args.only_test:
@@ -120,8 +144,21 @@ def main(args):
         best_criterion = float('inf')
         epoch = 0
 
+        # --- Initialize Train Metrics CSV ---
+        train_csv_path = os.path.join(args.save_dir, 'metrics_train.csv')
+        with open(train_csv_path, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'train_loss', 'val_loss', 'epoch_time_sec'])
+        # ------------------------------------
+
         print('START TRAINING EPOCHS')
         for epoch in range(epoch, num_epochs):
+
+            # --- Start Epoch Timer and VRAM Tracker ---
+            start_time = time.time()
+            if args.device == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+            # ------------------------------------------
 
             train_loss = model.epoch(
                 train_loader, optimizer, scaler,
@@ -129,14 +166,33 @@ def main(args):
             
             val_loss = model.epoch(val_loader)
 
+            # --- Calculate Epoch Time and Max VRAM ---
+            epoch_time = time.time() - start_time
+            vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if args.device == "cuda" else 0.0
+            
+            wandb.log({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "time_per_epoch_sec": epoch_time,
+                "vram_used_mb": vram_mb
+            })
+            # -----------------------------------------
+
+            # --- Save Train Metrics to CSV ---
+            with open(train_csv_path, mode='a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([epoch, train_loss, val_loss, epoch_time])
+            # ---------------------------------
+
             better = False
             if val_loss < best_criterion:
                 best_criterion = val_loss
                 better = True
             
             #Printing info epoch
-            print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f}'.format(
-                epoch, train_loss, val_loss))
+            print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f} | Time: {:.2f}s | Peak VRAM: {:.2f} MB'.format(
+                epoch, train_loss, val_loss, epoch_time, vram_mb))
             if better:
                 print('New best mAP epoch!')
 
@@ -145,7 +201,6 @@ def main(args):
             })
 
             if args.save_dir is not None:
-                os.makedirs(args.save_dir, exist_ok=True)
                 store_json(os.path.join(args.save_dir, 'loss.json'), losses, pretty=True)
 
                 if better:
@@ -154,23 +209,63 @@ def main(args):
     print('START INFERENCE')
     model.load(torch.load(os.path.join(ckpt_dir, 'checkpoint_best.pt')))
 
+    # --- Start Inference Timer ---
+    inference_start = time.time()
+    # -----------------------------
+
     # Evaluation on test split
     map_score, ap_score = evaluate(model, test_data, nms_window = 5)
 
+    # --- Log Inference Time ---
+    inference_time = time.time() - inference_start
+    wandb.run.summary["inference_time_sec"] = inference_time
+    print(f"Inference Time: {inference_time:.2f} seconds")
+    # --------------------------
+
     # Report results per-class in table
     table = []
+    ap_logs = {}
     for i, class_name in enumerate(classes.keys()):
-        table.append([class_name, f"{ap_score[i]*100:.2f}"])
+        ap_val = ap_score[i] * 100
+        table.append([class_name, f"{ap_val:.2f}"])
+        ap_logs[f"AP/{class_name}"] = ap_val  # Log individual AP per class
 
     headers = ["Class", "Average Precision"]
     print(tabulate(table, headers, tablefmt="grid"))
 
     # Report average results in table
-    avg_table = [["Mean", f"{map_score*100:.2f}"]]
+    avg_table = [["Mean (mAP12)", f"{map_score*100:.2f}"]]
     headers = ["", "Average Precision"]
-
     print(tabulate(avg_table, headers, tablefmt="grid"))
     
+    # --- Calculate AP10 ---
+    if len(ap_score) >= 10:
+        ap10_score = np.mean(ap_score[:10])
+    else:
+        ap10_score = map_score
+    # ----------------------
+
+    # --- Log Final Metrics to wandb (mAP12 and mAP10) ---
+    ap_logs["mAP12"] = map_score * 100
+    ap_logs["mAP10"] = ap10_score * 100
+        
+    wandb.log(ap_logs)
+    wandb.run.summary["mAP12"] = ap_logs["mAP12"]
+    wandb.run.summary["mAP10"] = ap_logs["mAP10"]
+    wandb.finish()
+    # ----------------------------------------------------
+
+    # --- Save Eval Metrics to CSV ---
+    eval_csv_path = os.path.join(args.save_dir, 'metrics_eval.csv')
+    with open(eval_csv_path, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['class', 'average_precision'])
+        for i, class_name in enumerate(classes.keys()):
+            writer.writerow([class_name, ap_score[i]])  # Saving raw float as requested
+        writer.writerow(['mean', map_score])
+        writer.writerow(['AP10', ap10_score])
+    # --------------------------------
+
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
 
 

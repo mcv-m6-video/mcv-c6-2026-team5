@@ -24,10 +24,11 @@ uv.lock
 # ignore finished week1
 week1
 
-# from week5
+# from week5/6
 .idea/
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 logs/
+wandb/

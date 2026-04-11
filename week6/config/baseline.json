@@ -1,8 +1,8 @@
 {
-    "frame_dir": "/data-fast/data-server/aclapes/SN-BAS-2025_frames/398x224",
-    "save_dir": "/data-fast/data-server/aclapes/SN-BAS-2025_savedata",
-    "labels_dir": "/data-fast/data-server/aclapes/SN-BAS-2025",
-    "store_mode": "store",
+    "frame_dir": "/ghome/group05/datasets/SoccerNet_Frames/398x224",
+    "save_dir": "/ghome/group05/datasets/WEEK6/SN-BAS-2025_savedata",
+    "labels_dir": "/ghome/group05/datasets/SoccerNet/SN-BAS-2025",
+    "store_mode": "load",
     "task": "spotting",
     "batch_size": 4,
     "clip_len": 50,
