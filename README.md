@@ -23,10 +23,12 @@ Focuses on building a complete pipeline for object detection, tracking, and Mult
 * **[Week 3: Advanced Tracking & Optical Flow](./week3)** Integration of Optical Flow to improve tracking robustness and deep learning-based tracking refinement.
 * **[Week 4: MTMC Tracking & ReID](./week4)** Expansion of tracking to multiple cameras (Multi-Target Multi-Camera) using metric learning (Re-Identification) and global graph matching.
 
-### Project 2: Sports Video Analysis (Week 5)
+### Project 2: Sports Video Analysis (Weeks 5-6)
 Focuses on temporal action spotting within long, untrimmed sports broadcast videos.
 
-* **[Week 5: Action Spotting on SoccerNet](./week5)** Temporal action spotting for the SoccerNet dataset. Implementation of Temporal Convolutional Networks (TCNs), Multi-clip fusion strategies, Class-Aware Sampling, and Multi-modal architectures (RGB + Optical Flow) to identify specific football actions in time.
+* **[Week 5: Action Classification on SoccerNet](./week5)** Initial exploration using clip-level action classification. Implementation of Temporal Convolutional Networks (TCNs), Multi-clip fusion strategies, Class-Aware Sampling, and Multi-modal architectures (RGB + Optical Flow).
+
+* **[Week 6: Action Spotting](./week6)** Transition to precise frame-level temporal action spotting. Implementation of Non-Maximum Suppression (NMS) ablations for peak detection, Temporal Shift modules, Lightweight Temporal Attention, and animated temporal probability visualizations.
 
 ## 🛠️ General Setup & Installation
 
