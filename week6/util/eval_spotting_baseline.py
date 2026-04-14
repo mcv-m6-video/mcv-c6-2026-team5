@@ -17,45 +17,8 @@ from dataset.frame import FPS_SN
 #Constants
 INFERENCE_BATCH_SIZE = 4
 
-def apply_smoothing(predictions, method="mean", window=3):
-    if method is None:
-        return predictions
-
-    if window <= 1:
-        return predictions
-
-    nf, nc = predictions.shape
-    smoothed = np.zeros_like(predictions)
-
-    if method == "mean":
-        kernel = np.ones(window, dtype=np.float32) / window
-    elif method == "gaussian":
-        center = window // 2
-        x = np.arange(window) - center
-        sigma = max(window / 3.0, 1e-6)
-        kernel = np.exp(-(x ** 2) / (2 * sigma ** 2)).astype(np.float32)
-        kernel /= kernel.sum()
-    else:
-        raise ValueError(f"Unknown smoothing method: {method}")
-
-    pad = window // 2
-    for c in range(nc):
-        padded = np.pad(predictions[:, c], (pad, pad), mode="edge")
-        smoothed[:, c] = np.convolve(padded, kernel, mode="valid")
-
-    return smoothed
-
-def evaluate(
-    model,
-    dataset,
-    batch_size=INFERENCE_BATCH_SIZE,
-    nms_window=5,
-    nms_type="hard",
-    nms_thresh=0.05,
-    smoothing=None,
-    smoothing_window=3,
-    soft_nms_sigma=1.0,
-):   
+def evaluate(model, dataset, batch_size=INFERENCE_BATCH_SIZE, nms_window = 5):
+    
     pred_dict = {}
     for video, video_len, _ in dataset.videos:
         pred_dict[video] = (
@@ -93,17 +56,7 @@ def evaluate(
         scores, support = pred_dict[video]
         support[support == 0] = 1
         scores = scores / support[:, np.newaxis] # mean over support predictions
-
-        if smoothing is not None:
-            scores = apply_smoothing(scores, method=smoothing, window=smoothing_window)
-        
-        pred = apply_NMS(
-                scores,
-                window=nms_window,
-                thresh=nms_thresh,
-                nms_type=nms_type,
-                sigma=soft_nms_sigma,
-            ) # apply NMS
+        pred = apply_NMS(scores, nms_window, 0.05) # apply NMS
         detections_numpy.append(pred)
 
     targets_numpy = list()
@@ -146,37 +99,23 @@ def evaluate(
     
 
 
-def apply_NMS(predictions, window, thresh=0.0, nms_type="hard", sigma=1.0):
-    predictions = predictions.copy()
+def apply_NMS(predictions, window, thresh=0.0):
+
     nf, nc = predictions.shape
-
     for i in range(nc):
-        aux = predictions[:, i].copy()
-        out = np.zeros(nf, dtype=np.float32) - 1
-
-        while np.max(aux) >= thresh:
+        aux = predictions[:,i]
+        aux2 = np.zeros(nf) -1
+        while(np.max(aux) >= thresh):
+            # Get the max remaining index and value
             max_value = np.max(aux)
             max_index = np.argmax(aux)
+            # detections_NMS[max_index,i] = max_value
 
-            out[max_index] = max_value
+            nms_from = int(np.maximum(-(window/2)+max_index,0))
+            nms_to = int(np.minimum(max_index+int(window/2), len(aux)))
 
-            nms_from = int(np.maximum(-(window / 2) + max_index, 0))
-            nms_to = int(np.minimum(max_index + int(window / 2), len(aux)))
-
-            if nms_type == "hard":
-                aux[nms_from:nms_to] = -1
-
-            elif nms_type == "soft":
-                for j in range(nms_from, nms_to):
-                    dist = abs(j - max_index)
-                    decay = np.exp(-(dist ** 2) / (2 * sigma ** 2))
-                    aux[j] = aux[j] * (1.0 - decay)
-
-                aux[max_index] = -1  # keep selected peak only once
-
-            else:
-                raise ValueError(f"Unknown nms_type: {nms_type}")
-
-        predictions[:, i] = out
+            aux[nms_from:nms_to] = -1
+            aux2[max_index] = max_value
+        predictions[:,i] = aux2
 
     return predictions

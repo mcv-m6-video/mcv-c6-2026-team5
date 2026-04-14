@@ -3,21 +3,25 @@
 File containing the main training script.
 """
 
+#Standard imports
 import argparse
 import torch
 import os
 import numpy as np
 import random
-import time
-import csv
-from torch.optim.lr_scheduler import ChainedScheduler, LinearLR, CosineAnnealingLR
+import time  # <-- Added for timing
+import csv   # <-- Added for saving metrics to CSV
+from torch.optim.lr_scheduler import (
+    ChainedScheduler, LinearLR, CosineAnnealingLR)
 import sys
 from torch.utils.data import DataLoader
 from tabulate import tabulate
 
+# WandB and Thop imports
 import wandb
 from thop import profile
 
+#Local imports
 from util.io import load_json, store_json
 from util.eval_spotting import evaluate
 from dataset.datasets import get_datasets
@@ -25,15 +29,16 @@ from model.model_spotting import Model
 
 
 def get_args():
+    #Basic arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--seed', type=int, default=1)
     return parser.parse_args()
 
-
 def update_args(args, config):
+    #Update arguments with config file
     args.frame_dir = config['frame_dir']
-    args.save_dir = config['save_dir'] + '/' + args.model
+    args.save_dir = config['save_dir'] + '/' + args.model # + '-' + str(args.seed) -> in case multiple seeds
     args.store_dir = config['save_dir'] + '/' + "splits"
     args.labels_dir = config['labels_dir']
     args.store_mode = config['store_mode']
@@ -51,64 +56,21 @@ def update_args(args, config):
     args.device = config['device']
     args.num_workers = config['num_workers']
 
-    # Spotting architecture options (baseline-safe defaults)
-    args.temporal_head = config.get('temporal_head', 'identity')
-
-    args.use_temporal_shift = config.get('use_temporal_shift', False)
-    args.temporal_shift_fold_div = config.get('temporal_shift_fold_div', 4)
-
-    args.tcn_num_layers = config.get('tcn_num_layers', 3)
-    args.tcn_kernel_size = config.get('tcn_kernel_size', 3)
-    args.tcn_hidden_dim = config.get('tcn_hidden_dim', None)
-    args.tcn_dropout = config.get('tcn_dropout', 0.2)
-    args.tcn_dilations = config.get('tcn_dilations', None)
-    
-    args.ms_tcn_dilations = config.get('ms_tcn_dilations', [1, 2, 4])
-    args.ms_tcn_kernel_sizes = config.get('ms_tcn_kernel_sizes', [3, 3, 3])
-
-    # Actionness head
-    args.use_actionness = config.get('use_actionness', False)
-    args.actionness_loss_weight = config.get('actionness_loss_weight', 1.0)
-    args.actionness_inference_alpha = config.get('actionness_inference_alpha', 1.0)
-    
-
-    # NMS and smoothing options
-    args.nms_window = config.get('nms_window', 5)
-    args.nms_type = config.get('nms_type', 'hard')
-    args.nms_thresh = config.get('nms_thresh', 0.05)
-    args.smoothing = config.get('smoothing', None)
-    args.smoothing_window = config.get('smoothing_window', 3)
-    args.soft_nms_sigma = config.get('soft_nms_sigma', 1.0)
-
-    # NMS rerun path (avoif override)
-    args.rerun_path = config.get('rerun_path', None)
-    args.checkpoint_path = config.get('checkpoint_path', None)
-
-    # Smoothness loss
-    args.use_smoothness_loss = config.get('use_smoothness_loss', False)
-    args.smoothness_loss_weight = config.get('smoothness_loss_weight', 0.0)
-
-
-    # Tiny temporal attention
-    args.use_temporal_attention = config.get('use_temporal_attention', False)
-
-    # Focal loss
-    args.use_focal_loss = config.get('use_focal_loss', False)
-    args.focal_gamma = config.get('focal_gamma', 2.0)
-    args.focal_alpha = config.get('focal_alpha', None)   # optional
     return args
-
 
 def get_lr_scheduler(args, optimizer, num_steps_per_epoch):
     cosine_epochs = args.num_epochs - args.warm_up_epochs
-    print('Using Linear Warmup ({}) + Cosine Annealing LR ({})'.format(args.warm_up_epochs, cosine_epochs))
+    print('Using Linear Warmup ({}) + Cosine Annealing LR ({})'.format(
+        args.warm_up_epochs, cosine_epochs))
     return args.num_epochs, ChainedScheduler([
-        LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=args.warm_up_epochs * num_steps_per_epoch),
-        CosineAnnealingLR(optimizer, num_steps_per_epoch * cosine_epochs),
-    ])
+        LinearLR(optimizer, start_factor=0.01, end_factor=1.0,
+                 total_iters=args.warm_up_epochs * num_steps_per_epoch),
+        CosineAnnealingLR(optimizer,
+            num_steps_per_epoch * cosine_epochs)])
 
 
 def main(args):
+    # Set seed
     print('Setting seed to: ', args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -118,12 +80,20 @@ def main(args):
     config = load_json(config_path)
     args = update_args(args, config)
 
-    wandb.init(project="C6-Spotting", name=args.model, config=config, entity="Team5-C5")
+    # --- Initialize wandb and log Configuration file ---
+    wandb.init(
+        project="C6-Spotting",
+        name=args.model,
+        config=config  # Automatically logs all parameters from the JSON
+    )
+    # ---------------------------------------------------
 
+    # Directory for storing / reading model checkpoints
     ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
     os.makedirs(ckpt_dir, exist_ok=True)
-    os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(args.save_dir, exist_ok=True) # Ensure save_dir exists for CSVs
 
+    # Get datasets train, validation (and validation for map -> Video dataset)
     classes, train_data, val_data, test_data = get_datasets(args)
 
     if args.store_mode == 'store':
@@ -132,156 +102,169 @@ def main(args):
     else:
         print('Datasets have been loaded from previous versions correctly!')
 
-    def worker_init_fn(worker_id):
-        random.seed(worker_id + epoch * 100)
+    def worker_init_fn(id):
+        random.seed(id + epoch * 100)
 
+    # Dataloaders
     train_loader = DataLoader(
-        train_data,
-        shuffle=False,
-        batch_size=args.batch_size,
-        pin_memory=True,
-        num_workers=args.num_workers,
+        train_data, shuffle=False, batch_size=args.batch_size,
+        pin_memory=True, num_workers=args.num_workers,
         prefetch_factor=(2 if args.num_workers > 0 else None),
-        worker_init_fn=worker_init_fn,
+        worker_init_fn=worker_init_fn
     )
-
+        
     val_loader = DataLoader(
-        val_data,
-        shuffle=False,
-        batch_size=args.batch_size,
-        pin_memory=True,
-        num_workers=args.num_workers,
+        val_data, shuffle=False, batch_size=args.batch_size,
+        pin_memory=True, num_workers=args.num_workers,
         prefetch_factor=(2 if args.num_workers > 0 else None),
-        worker_init_fn=worker_init_fn,
+        worker_init_fn=worker_init_fn
     )
 
+    # Model
     model = Model(args=args)
 
+    # --- Calculate MACs and Parameters using thop ---
     print("Calculating MACs and Parameters...")
     dummy_input = torch.randn(1, args.clip_len, 3, 224, 398).to(args.device)
-    macs, params = profile(model._model, inputs=(dummy_input,), verbose=False)
+    macs, params = profile(model._model, inputs=(dummy_input, ), verbose=False)
     wandb.run.summary["MACs"] = macs
     wandb.run.summary["Parameters"] = params
     print(f"MACs: {macs / 1e9:.2f} G, Params: {params / 1e6:.2f} M")
+    # ------------------------------------------------
 
     optimizer, scaler = model.get_optimizer({'lr': args.learning_rate})
 
     if not args.only_test:
+        # Warmup schedule
         num_steps_per_epoch = len(train_loader)
-        num_epochs, lr_scheduler = get_lr_scheduler(args, optimizer, num_steps_per_epoch)
-
+        num_epochs, lr_scheduler = get_lr_scheduler(
+            args, optimizer, num_steps_per_epoch)
+        
         losses = []
         best_criterion = float('inf')
         epoch = 0
 
+        # --- Initialize Train Metrics CSV ---
         train_csv_path = os.path.join(args.save_dir, 'metrics_train.csv')
         with open(train_csv_path, mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch', 'train_loss', 'val_loss', 'epoch_time_sec'])
+        # ------------------------------------
 
         print('START TRAINING EPOCHS')
         for epoch in range(epoch, num_epochs):
+
+            # --- Start Epoch Timer and VRAM Tracker ---
             start_time = time.time()
             if args.device == "cuda":
                 torch.cuda.reset_peak_memory_stats()
+            # ------------------------------------------
 
-            train_loss = model.epoch(train_loader, optimizer, scaler, lr_scheduler=lr_scheduler)
+            train_loss = model.epoch(
+                train_loader, optimizer, scaler,
+                lr_scheduler=lr_scheduler)
+            
             val_loss = model.epoch(val_loader)
 
+            # --- Calculate Epoch Time and Max VRAM ---
             epoch_time = time.time() - start_time
             vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if args.device == "cuda" else 0.0
-
+            
             wandb.log({
                 "epoch": epoch,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "time_per_epoch_sec": epoch_time,
-                "vram_used_mb": vram_mb,
+                "vram_used_mb": vram_mb
             })
+            # -----------------------------------------
 
+            # --- Save Train Metrics to CSV ---
             with open(train_csv_path, mode='a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([epoch, train_loss, val_loss, epoch_time])
+            # ---------------------------------
 
             better = False
             if val_loss < best_criterion:
                 best_criterion = val_loss
                 better = True
-
+            
+            #Printing info epoch
             print('[Epoch {}] Train loss: {:0.5f} Val loss: {:0.5f} | Time: {:.2f}s | Peak VRAM: {:.2f} MB'.format(
                 epoch, train_loss, val_loss, epoch_time, vram_mb))
             if better:
                 print('New best mAP epoch!')
 
-            losses.append({'epoch': epoch, 'train': train_loss, 'val': val_loss})
+            losses.append({
+                'epoch': epoch, 'train': train_loss, 'val': val_loss
+            })
 
             if args.save_dir is not None:
                 store_json(os.path.join(args.save_dir, 'loss.json'), losses, pretty=True)
+
                 if better:
-                    torch.save(model.state_dict(), os.path.join(ckpt_dir, 'checkpoint_best.pt'))
+                    torch.save( model.state_dict(), os.path.join(ckpt_dir, 'checkpoint_best.pt') )
 
     print('START INFERENCE')
-    if args.checkpoint_path is not None:
-        ckpt_path = args.checkpoint_path
-    else:
-        ckpt_dir = os.path.join(args.save_dir, 'checkpoints')
-        ckpt_path = os.path.join(ckpt_dir, 'checkpoint_best.pt')
+    model.load(torch.load(os.path.join(ckpt_dir, 'checkpoint_best.pt')))
 
-    print(f"Loading checkpoint from: {ckpt_path}")
-    model.load(torch.load(ckpt_path))
-    
+    # --- Start Inference Timer ---
     inference_start = time.time()
-    #map_score, ap_score = evaluate(model, test_data, nms_window=5)
-    map_score, ap_score = evaluate(
-            model,
-            test_data,
-            nms_window=args.nms_window,
-            nms_type=args.nms_type,
-            nms_thresh=args.nms_thresh,
-            smoothing=args.smoothing,
-            smoothing_window=args.smoothing_window,
-            soft_nms_sigma=args.soft_nms_sigma,
-        )
-    
+    # -----------------------------
+
+    # Evaluation on test split
+    map_score, ap_score = evaluate(model, test_data, nms_window = 5)
+
+    # --- Log Inference Time ---
     inference_time = time.time() - inference_start
     wandb.run.summary["inference_time_sec"] = inference_time
     print(f"Inference Time: {inference_time:.2f} seconds")
+    # --------------------------
 
+    # Report results per-class in table
     table = []
     ap_logs = {}
     for i, class_name in enumerate(classes.keys()):
         ap_val = ap_score[i] * 100
         table.append([class_name, f"{ap_val:.2f}"])
-        ap_logs[f"AP/{class_name}"] = ap_val
+        ap_logs[f"AP/{class_name}"] = ap_val  # Log individual AP per class
 
     headers = ["Class", "Average Precision"]
     print(tabulate(table, headers, tablefmt="grid"))
 
+    # Report average results in table
     avg_table = [["Mean (mAP12)", f"{map_score*100:.2f}"]]
     headers = ["", "Average Precision"]
     print(tabulate(avg_table, headers, tablefmt="grid"))
+    
+    # --- Calculate AP10 ---
+    if len(ap_score) >= 10:
+        ap10_score = np.mean(ap_score[:10])
+    else:
+        ap10_score = map_score
+    # ----------------------
 
-    ap10_score = np.mean(ap_score[:10]) if len(ap_score) >= 10 else map_score
-
+    # --- Log Final Metrics to wandb (mAP12 and mAP10) ---
     ap_logs["mAP12"] = map_score * 100
     ap_logs["mAP10"] = ap10_score * 100
+        
     wandb.log(ap_logs)
     wandb.run.summary["mAP12"] = ap_logs["mAP12"]
     wandb.run.summary["mAP10"] = ap_logs["mAP10"]
     wandb.finish()
+    # ----------------------------------------------------
 
-    #eval_csv_path = os.path.join(args.save_dir, 'metrics_eval.csv')
-    eval_base_dir = args.rerun_path if args.rerun_path is not None else args.save_dir
-    os.makedirs(eval_base_dir, exist_ok=True)
-    eval_csv_path = os.path.join(eval_base_dir, 'metrics_eval.csv')
-
+    # --- Save Eval Metrics to CSV ---
+    eval_csv_path = os.path.join(args.save_dir, 'metrics_eval.csv')
     with open(eval_csv_path, mode='w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['class', 'average_precision'])
         for i, class_name in enumerate(classes.keys()):
-            writer.writerow([class_name, ap_score[i]])
+            writer.writerow([class_name, ap_score[i]])  # Saving raw float as requested
         writer.writerow(['mean', map_score])
         writer.writerow(['AP10', ap10_score])
+    # --------------------------------
 
     print('CORRECTLY FINISHED TRAINING AND INFERENCE')
 
