@@ -6,6 +6,8 @@
 #SBATCH -o logs/log_%u_%j.out   # File to which STDOUT will be written
 #SBATCH -e logs/log_%u_%j.err   # File to which STDERR will be written
 
-python main_spotting.py --model F3_focal_loss
-
+python main_spotting.py --model E2_TCN8_NMS_hard_w3_th_005
+python main_spotting.py --model E2_TCN8_NMS_hard_w7_th_005
+python main_spotting.py --model E2_TCN8_NMS_hard_w10_th_003_mean_smooth_sw5
+python main_spotting.py --model E2_TCN8_NMS_hard_w10_th_003_mean_smooth_sw7
 

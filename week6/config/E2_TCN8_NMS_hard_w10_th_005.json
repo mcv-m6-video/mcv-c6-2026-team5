@@ -24,14 +24,19 @@
     "tcn_hidden_dim": null,
     "tcn_dropout": 0.2,
     "tcn_dilations": [1, 2, 4],
+
+    "use_smoothness_loss": false,
+    "smoothness_loss_weight": 0.0,
+
+    "use_temporal_attention": true,
     
-    "nms_window": 7,
+    "nms_window": 10,
     "nms_type": "hard",
     "nms_thresh": 0.05,
     "smoothing": null,
 
-    "checkpoint_path": "/ghome/group05/datasets/WEEK6/SN-BAS-2025_savedata/A5_tcn_rny008/A5_TCNneck_RNY008/checkpoints/checkpoint_best.pt",
+    "checkpoint_path": "/ghome/group05/datasets/WEEK6/SN-BAS-2025_savedata/F2_lightweight_att/F2_lightweight_att/checkpoints/checkpoint_best.pt",
 
-    "rerun_path": "/ghome/group05/datasets/WEEK6/SN-BAS-2025_savedata/E1_TCN8_NMS_hard_w7_th_005"
+    "rerun_path": "/ghome/group05/datasets/WEEK6/SN-BAS-2025_savedata/E2_TCN8_NMS_hard_w10_th_005"
 
 }
