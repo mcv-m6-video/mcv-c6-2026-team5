@@ -35,18 +35,20 @@ class Model(BaseRGBModel):
                 self._d = feat_dim
                 self._features = features
                 self._is_3d = False
+                self._is_unet = False
+                self._has_gru = False
 
             # ── X3D-M base ───────────────────────────────────────────
             elif self._feature_arch == 'x3d_m':
                 x3d = torch.hub.load(
                     'facebookresearch/pytorchvideo',
                     'x3d_m', pretrained=True)
-                # Quitar la head de clasificación (último bloque)
                 self._features = nn.Sequential(*list(x3d.blocks[:-1]))
                 self._spatial_pool = nn.AdaptiveAvgPool3d((None, 1, 1))
-                # Dimensión de salida de X3D-M antes de la head
                 self._d = 192
                 self._is_3d = True
+                self._is_unet = False
+                self._has_gru = False
 
             # ── X3D-M + BiGRU ────────────────────────────────────────
             elif self._feature_arch == 'x3d_m_gru':
@@ -57,6 +59,7 @@ class Model(BaseRGBModel):
                 self._spatial_pool = nn.AdaptiveAvgPool3d((None, 1, 1))
                 self._d = 192
                 self._is_3d = True
+                self._is_unet = False
 
                 gru_hidden = args.gru_hidden if hasattr(args, 'gru_hidden') else 256
                 gru_layers = args.gru_layers if hasattr(args, 'gru_layers') else 2
@@ -69,7 +72,96 @@ class Model(BaseRGBModel):
                     bidirectional=True,
                     dropout=0.2 if gru_layers > 1 else 0.0
                 )
-                # La salida del GRU es hidden*2 (bidireccional)
+                self._d = gru_hidden * 2
+                self._has_gru = True
+
+            # ── X3D-M + UNet con reducción temporal L→L'→L ──────────
+            elif self._feature_arch == 'x3d_m_unet':
+                x3d = torch.hub.load(
+                    'facebookresearch/pytorchvideo',
+                    'x3d_m', pretrained=True)
+
+                blocks = list(x3d.blocks[:-1])
+                self._stem   = blocks[0]  # out: [B, 24,  T, H/2,  W/2]
+                self._stage1 = blocks[1]  # out: [B, 24,  T, H/4,  W/4]
+                self._stage2 = blocks[2]  # out: [B, 48,  T, H/8,  W/8]
+                self._stage3 = blocks[3]  # out: [B, 96,  T, H/16, W/16]
+                self._stage4 = blocks[4]  # out: [B, 192, T, H/32, W/32]
+
+                self._spatial_pool = nn.AdaptiveAvgPool3d((None, 1, 1))
+                self._is_3d = True
+                self._is_unet = True
+                self._has_gru = False
+
+                # Decoder con reducción temporal explícita:
+                # e4: [B, 192, T=50] → MaxPool1d(2) → [B, 192, T'=25]
+                # _dec3: ConvTranspose1d stride=2: T'=25 → T=50
+                # Luego concat con skip e3 y refinar
+                self._dec3_up = nn.ConvTranspose1d(
+                    192, 96, kernel_size=4, stride=2, padding=1
+                )  # [B, 192, 25] → [B, 96, 50]
+                self._dec3_refine = nn.Sequential(
+                    nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(96), nn.ReLU()
+                )  # [B, 96+96, 50] → [B, 96, 50]
+
+                self._dec2 = nn.Sequential(
+                    nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(48), nn.ReLU()
+                )  # [B, 96+48, 50] → [B, 48, 50]
+
+                self._dec1 = nn.Sequential(
+                    nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(32), nn.ReLU()
+                )  # [B, 48+24, 50] → [B, 32, 50]
+
+                self._d = 32
+
+            # ── X3D-M + UNet con reducción temporal L→L'→L + BiGRU ──
+            elif self._feature_arch == 'x3d_m_unet_gru':
+                x3d = torch.hub.load(
+                    'facebookresearch/pytorchvideo',
+                    'x3d_m', pretrained=True)
+
+                blocks = list(x3d.blocks[:-1])
+                self._stem   = blocks[0]
+                self._stage1 = blocks[1]
+                self._stage2 = blocks[2]
+                self._stage3 = blocks[3]
+                self._stage4 = blocks[4]
+
+                self._spatial_pool = nn.AdaptiveAvgPool3d((None, 1, 1))
+                self._is_3d = True
+                self._is_unet = True
+                self._has_gru = True
+
+                self._dec3_up = nn.ConvTranspose1d(
+                    192, 96, kernel_size=4, stride=2, padding=1
+                )
+                self._dec3_refine = nn.Sequential(
+                    nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(96), nn.ReLU()
+                )
+                self._dec2 = nn.Sequential(
+                    nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(48), nn.ReLU()
+                )
+                self._dec1 = nn.Sequential(
+                    nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(32), nn.ReLU()
+                )
+
+                gru_hidden = args.gru_hidden if hasattr(args, 'gru_hidden') else 256
+                gru_layers = args.gru_layers if hasattr(args, 'gru_layers') else 2
+
+                self._gru = nn.GRU(
+                    input_size=32,
+                    hidden_size=gru_hidden,
+                    num_layers=gru_layers,
+                    batch_first=True,
+                    bidirectional=True,
+                    dropout=0.2 if gru_layers > 1 else 0.0
+                )
                 self._d = gru_hidden * 2
 
             else:
@@ -78,7 +170,6 @@ class Model(BaseRGBModel):
             # Cabeza de clasificación (compartida por todos los modelos)
             self._fc = FCLayers(self._d, args.num_classes + 1)
 
-            # Augmentaciones (solo para modelos 2D frame a frame)
             self.augmentation = T.Compose([
                 T.RandomApply([T.ColorJitter(hue=0.2)], p=0.25),
                 T.RandomApply([T.ColorJitter(saturation=(0.7, 1.2))], p=0.25),
@@ -95,70 +186,126 @@ class Model(BaseRGBModel):
             ])
 
         def forward(self, x):
-            x = self.normalize(x)  # [0, 1]
-
+            x = self.normalize(x)  # → [B, L, C, H, W], valores en [0,1]
             if self._is_3d:
-                return self._forward_3d(x)
+                if self._is_unet:
+                    return self._forward_3d_unet(x)
+                else:
+                    return self._forward_3d(x)
             else:
                 return self._forward_2d(x)
 
         def _forward_2d(self, x):
             """Pipeline original frame a frame (RegNet)."""
             batch_size, clip_len, channels, height, width = x.shape
-
             if self.training:
                 x = self.augment(x)
             x = self.standarize(x)
-
             im_feat = self._features(
                 x.view(-1, channels, height, width)
             ).reshape(batch_size, clip_len, self._d)
-
             im_feat = self._fc(im_feat)
             return im_feat
 
         def _forward_3d(self, x):
-            """Pipeline X3D-M: input [B, T, C, H, W] → [B, T, C+1]."""
+            """Pipeline X3D-M base y X3D-M+GRU."""
             batch_size, clip_len, channels, height, width = x.shape
-
-            # X3D-M espera [B, C, T, H, W]
-            x = x.permute(0, 2, 1, 3, 4)
+            x = x.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
 
             if self.training:
                 x = self._augment_3d(x)
-
-            # Normalización ImageNet sobre la dimensión de canal
             x = self._standarize_3d(x)
 
-            # Backbone X3D-M → [B, D, T', H', W']
-            feat = self._features(x)
-
-            # Spatial pooling → [B, D, T']
-            feat = self._spatial_pool(feat)
+            feat = self._features(x)          # [B, D, T', H', W']
+            feat = self._spatial_pool(feat)   # [B, D, T', 1, 1]
             feat = feat.squeeze(-1).squeeze(-1)  # [B, D, T']
 
-            # Si T' != clip_len, interpolamos de vuelta a clip_len
             if feat.shape[2] != clip_len:
-                feat = F.interpolate(
-                    feat,
-                    size=clip_len,
-                    mode='linear',
-                    align_corners=False
-                )  # [B, D, clip_len]
+                feat = F.interpolate(feat, size=clip_len,
+                                     mode='linear', align_corners=False)
 
-            feat = feat.permute(0, 2, 1)  # [B, clip_len, D]
+            feat = feat.permute(0, 2, 1)  # [B, T, D]
 
-            # GRU (solo en x3d_m_gru)
             if hasattr(self, '_gru'):
-                feat, _ = self._gru(feat)  # [B, clip_len, hidden*2]
+                feat, _ = self._gru(feat)
 
-            # Clasificación
-            out = self._fc(feat)  # [B, clip_len, num_classes+1]
-            return out
+            return self._fc(feat)
+
+        def _forward_3d_unet(self, x):
+            """
+            Pipeline X3D-M con UNet y reducción temporal explícita L→L'→L.
+
+            Flujo temporal:
+              Encoder stages: T=50 en todos (X3D-M no reduce T)
+              Bottleneck: MaxPool1d(2) → T'=25  ← reducción explícita
+              Decoder:    ConvTranspose1d(stride=2) → T=50  ← recuperación
+              Skip connections preservan info de alta resolución temporal
+            """
+            batch_size, clip_len, channels, height, width = x.shape
+            x = x.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+
+            if self.training:
+                x = self._augment_3d(x)
+            x = self._standarize_3d(x)
+
+            # ── ENCODER ─────────────────────────────────────────────
+            s0 = self._stem(x)    # [B, 24,  T, H/2,  W/2]
+            s1 = self._stage1(s0) # [B, 24,  T, H/4,  W/4]
+            s2 = self._stage2(s1) # [B, 48,  T, H/8,  W/8]
+            s3 = self._stage3(s2) # [B, 96,  T, H/16, W/16]
+            s4 = self._stage4(s3) # [B, 192, T, H/32, W/32]
+
+            # Spatial pooling → colapsa H y W, mantiene T
+            def sp(feat):
+                f = self._spatial_pool(feat)
+                return f.squeeze(-1).squeeze(-1)  # [B, D, T]
+
+            e4 = sp(s4)  # [B, 192, T=50]
+            e3 = sp(s3)  # [B, 96,  T=50]
+            e2 = sp(s2)  # [B, 48,  T=50]
+            e1 = sp(s1)  # [B, 24,  T=50]
+
+            # ── CUELLO DE BOTELLA: reducción temporal L→L' ──────────
+            # MaxPool1d comprime T=50 → T'=25
+            bottleneck = F.max_pool1d(e4, kernel_size=2, stride=2)
+            # bottleneck: [B, 192, T'=25]
+
+            # ── DECODER: recuperación temporal L'→L ─────────────────
+            # Nivel 3: T'=25 → T=50 via ConvTranspose1d(stride=2)
+            d3_up = self._dec3_up(bottleneck)           # [B, 96, T=50]
+            # Si por redondeo T no cuadra exactamente, forzamos
+            if d3_up.shape[2] != e3.shape[2]:
+                d3_up = F.interpolate(d3_up, size=e3.shape[2],
+                                      mode='linear', align_corners=False)
+            d3 = self._dec3_refine(
+                torch.cat([d3_up, e3], dim=1)           # [B, 96+96, T=50]
+            )  # [B, 96, T=50]
+
+            # Nivel 2: refinamiento con skip e2
+            d2 = self._dec2(
+                torch.cat([d3, e2], dim=1)              # [B, 96+48, T=50]
+            )  # [B, 48, T=50]
+
+            # Nivel 1: refinamiento con skip e1
+            d1 = self._dec1(
+                torch.cat([d2, e1], dim=1)              # [B, 48+24, T=50]
+            )  # [B, 32, T=50]
+
+            # Si por alguna razón T != clip_len, interpolamos
+            if d1.shape[2] != clip_len:
+                d1 = F.interpolate(d1, size=clip_len,
+                                   mode='linear', align_corners=False)
+
+            feat = d1.permute(0, 2, 1)  # [B, T=50, 32]
+
+            # GRU opcional (solo en x3d_m_unet_gru)
+            if self._has_gru:
+                feat, _ = self._gru(feat)  # [B, T=50, hidden*2]
+
+            return self._fc(feat)  # [B, T=50, num_classes+1]
 
         def _augment_3d(self, x):
             """Augmentación para input 3D [B, C, T, H, W]."""
-            # Aplicamos las mismas augmentaciones frame a frame
             B, C, T, H, W = x.shape
             x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W]
             for i in range(B):
@@ -209,10 +356,8 @@ class Model(BaseRGBModel):
               lr_scheduler=None):
 
         if optimizer is None:
-            inference = True
             self._model.eval()
         else:
-            inference = False
             optimizer.zero_grad()
             self._model.train()
 
@@ -229,10 +374,22 @@ class Model(BaseRGBModel):
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
                     pred = pred.view(-1, self._num_classes + 1)
-                    label = label.view(-1)
-                    loss = F.cross_entropy(
-                        pred, label,
-                        reduction='mean', weight=weights)
+                    
+                    # ── TGLS: labels suaves vs labels duros ─────────────
+                    if label.dtype == torch.float32:
+                        # Label suave [B*T, C+1]: usar KL divergence
+                        label = label.view(-1, self._num_classes + 1)
+                        log_pred = torch.log(
+                            torch.softmax(pred, dim=-1) + 1e-8)
+                        loss = F.kl_div(
+                            log_pred, label,
+                            reduction='batchmean')
+                    else:
+                        # Label duro [B*T]: cross entropy normal
+                        label = label.view(-1)
+                        loss = F.cross_entropy(
+                            pred, label,
+                            reduction='mean', weight=weights)
 
                 if optimizer is not None:
                     step(optimizer, scaler, loss,
@@ -245,7 +402,7 @@ class Model(BaseRGBModel):
     def predict(self, seq):
         if not isinstance(seq, torch.Tensor):
             seq = torch.FloatTensor(seq)
-        if len(seq.shape) == 4:  # (L, C, H, W)
+        if len(seq.shape) == 4:  # (L, C, H, W) → añadir batch
             seq = seq.unsqueeze(0)
         if seq.device != self.device:
             seq = seq.to(self.device)

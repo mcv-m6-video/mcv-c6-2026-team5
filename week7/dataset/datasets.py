@@ -21,25 +21,35 @@ def get_datasets(args):
     overlap = args.overlap if "overlap" in args else DEFAULT_OVERLAP
 
     dataset_kwargs = {
-        'stride': stride, 'overlap': overlap, 'dataset': args.dataset, 'labels_dir': args.labels_dir, 'task': args.task,
+        'stride': stride, 'overlap': overlap, 'dataset': args.dataset,
+        'labels_dir': args.labels_dir, 'task': args.task,
     }
 
     print('Dataset size:', dataset_len)
 
     train_data = ActionSpotDataset(
         classes, os.path.join('data', args.dataset, 'train.json'),
-        args.frame_dir, args.store_dir, args.store_mode, args.clip_len, dataset_len, **dataset_kwargs)
+        args.frame_dir, args.store_dir, args.store_mode,
+        args.clip_len, dataset_len, **dataset_kwargs)
     train_data.print_info()
 
     val_data = ActionSpotDataset(
         classes, os.path.join('data', args.dataset, 'val.json'),
-        args.frame_dir, args.store_dir, args.store_mode, args.clip_len, dataset_len // 4, **dataset_kwargs)
-    val_data.print_info()     
+        args.frame_dir, args.store_dir, args.store_mode,
+        args.clip_len, dataset_len // 4, **dataset_kwargs)
+    val_data.print_info()
 
-    dataset_kwargs['overlap'] = 0
+    # ── Dataset de vídeo para evaluación en validación ───────────────
+    dataset_kwargs_video = {k: v for k, v in dataset_kwargs.items()}
+    dataset_kwargs_video['overlap'] = 0
 
-    test_data = ActionSpotVideoDataset(classes, os.path.join('data', args.dataset, 'test.json'),
-        args.frame_dir, args.clip_len, **dataset_kwargs)
+    val_video_data = ActionSpotVideoDataset(
+        classes, os.path.join('data', args.dataset, 'val.json'),
+        args.frame_dir, args.clip_len, **dataset_kwargs_video)
+
+    test_data = ActionSpotVideoDataset(
+        classes, os.path.join('data', args.dataset, 'test.json'),
+        args.frame_dir, args.clip_len, **dataset_kwargs_video)
     test_data.print_info()
-        
-    return classes, train_data, val_data, test_data
+
+    return classes, train_data, val_data, val_video_data, test_data
