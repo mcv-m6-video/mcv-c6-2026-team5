@@ -67,8 +67,13 @@ def update_args(args, config):
     args.gru_hidden = config.get('gru_hidden', 256)
     args.gru_layers = config.get('gru_layers', 2)
 
-    # Early stopping 
+    # Early stopping
     args.early_stopping_patience = config.get('early_stopping_patience', None)
+
+    # TGLS
+    args.use_tgls   = config.get('use_tgls', False)
+    args.tgls_sigma = config.get('tgls_sigma', 0.55)
+    args.tgls_window = config.get('tgls_window', 5)
 
     return args
 
@@ -100,7 +105,7 @@ def main(args):
     os.makedirs(ckpt_dir, exist_ok=True)
     os.makedirs(args.save_dir, exist_ok=True)
 
-    classes, train_data, val_data, test_data = get_datasets(args)
+    classes, train_data, val_data, val_video_data, test_data = get_datasets(args)
 
     if args.store_mode == 'store':
         print('Datasets have been stored correctly! Re-run changing "mode" to "load" in the config JSON.')
@@ -151,9 +156,8 @@ def main(args):
         best_criterion = -1.0
         epoch = 0
 
-        # ── Early stopping ───────────────────────────────────────────
-        patience = args.early_stopping_patience          
-        epochs_no_improve = 0                            
+        patience = args.early_stopping_patience
+        epochs_no_improve = 0
 
         train_csv_path = os.path.join(args.save_dir, 'metrics_train.csv')
         with open(train_csv_path, mode='w', newline='') as f:
@@ -176,7 +180,7 @@ def main(args):
             val_loss = model.epoch(val_loader)
 
             val_mAP_1s, val_mAP_05s, _, _ = evaluate(
-                model, val_data,
+                model, val_video_data,
                 nms_window=args.nms_window,
                 nms_type=args.nms_type,
                 nms_thresh=args.nms_thresh,
@@ -192,9 +196,9 @@ def main(args):
             better = val_mAP_1s > best_criterion
             if better:
                 best_criterion = val_mAP_1s
-                epochs_no_improve = 0                    
+                epochs_no_improve = 0
             else:
-                epochs_no_improve += 1                   
+                epochs_no_improve += 1
 
             print('[Epoch {}] Train loss: {:0.5f} | Val loss: {:0.5f} | '
                   'Val mAP@1s: {:.2f} | Val mAP@0.5s: {:.2f} | '
@@ -235,11 +239,10 @@ def main(args):
                         model.state_dict(),
                         os.path.join(ckpt_dir, 'checkpoint_best.pt'))
 
-            # ── Early stopping check ─────────────────────────────────
-            if patience is not None and epochs_no_improve >= patience:  
-                print(f'Early stopping triggered at epoch {epoch} '        
-                      f'(no improvement for {patience} epochs)')           
-                break                                                       
+            if patience is not None and epochs_no_improve >= patience:
+                print(f'Early stopping triggered at epoch {epoch} '
+                      f'(no improvement for {patience} epochs)')
+                break
 
     print('START INFERENCE')
     if args.checkpoint_path is not None:
@@ -264,7 +267,6 @@ def main(args):
     wandb.run.summary["inference_time_sec"] = inference_time
     print(f"Inference Time: {inference_time:.2f} seconds")
 
-    # ── Tabla per-class ──────────────────────────────────────────────
     table = []
     ap_logs = {}
     for i, class_name in enumerate(classes.keys()):
@@ -277,8 +279,7 @@ def main(args):
     headers = ["Class", "AP@1s", "AP@0.5s"]
     print(tabulate(table, headers, tablefmt="grid"))
 
-    # mAP10 (excluyendo Free Kick y Goal, clases 10 y 11)
-    test_mAP10_1s  = float(np.mean(test_ap_1s[:10]))  * 100
+    test_mAP10_1s  = float(np.mean(test_ap_1s[:10])) * 100
     test_mAP10_05s = float(np.mean(test_ap_05s[:10])) * 100
 
     avg_table = [
@@ -291,10 +292,10 @@ def main(args):
     print(tabulate(avg_table, headers, tablefmt="grid"))
 
     ap_logs.update({
-        "mAP12_1s":   test_mAP_1s  * 100,
-        "mAP12_05s":  test_mAP_05s * 100,
-        "mAP10_1s":   test_mAP10_1s,
-        "mAP10_05s":  test_mAP10_05s,
+        "mAP12_1s":  test_mAP_1s  * 100,
+        "mAP12_05s": test_mAP_05s * 100,
+        "mAP10_1s":  test_mAP10_1s,
+        "mAP10_05s": test_mAP10_05s,
     })
     wandb.log(ap_logs)
     wandb.run.summary["mAP12_1s"]  = test_mAP_1s  * 100
@@ -303,7 +304,6 @@ def main(args):
     wandb.run.summary["mAP10_05s"] = test_mAP10_05s
     wandb.finish()
 
-    # ── CSV de resultados test ───────────────────────────────────────
     eval_base_dir = args.rerun_path if args.rerun_path is not None else args.save_dir
     os.makedirs(eval_base_dir, exist_ok=True)
     eval_csv_path = os.path.join(eval_base_dir, 'metrics_eval.csv')

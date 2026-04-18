@@ -186,7 +186,7 @@ class Model(BaseRGBModel):
             ])
 
         def forward(self, x):
-            x = self.normalize(x)  # → [B, L, C, H, W], valores en [0,1]
+            x = self.normalize(x)
             if self._is_3d:
                 if self._is_unet:
                     return self._forward_3d_unet(x)
@@ -265,52 +265,36 @@ class Model(BaseRGBModel):
             e2 = sp(s2)  # [B, 48,  T=50]
             e1 = sp(s1)  # [B, 24,  T=50]
 
-            # ── CUELLO DE BOTELLA: reducción temporal L→L' ──────────
-            # MaxPool1d comprime T=50 → T'=25
+            # ── CUELLO DE BOTELLA: L=50 → L'=25 ─────────────────────
             bottleneck = F.max_pool1d(e4, kernel_size=2, stride=2)
-            # bottleneck: [B, 192, T'=25]
 
-            # ── DECODER: recuperación temporal L'→L ─────────────────
-            # Nivel 3: T'=25 → T=50 via ConvTranspose1d(stride=2)
-            d3_up = self._dec3_up(bottleneck)           # [B, 96, T=50]
-            # Si por redondeo T no cuadra exactamente, forzamos
+            # ── DECODER: L'=25 → L=50 ───────────────────────────────
+            d3_up = self._dec3_up(bottleneck)
             if d3_up.shape[2] != e3.shape[2]:
                 d3_up = F.interpolate(d3_up, size=e3.shape[2],
                                       mode='linear', align_corners=False)
-            d3 = self._dec3_refine(
-                torch.cat([d3_up, e3], dim=1)           # [B, 96+96, T=50]
-            )  # [B, 96, T=50]
+            d3 = self._dec3_refine(torch.cat([d3_up, e3], dim=1))
+            d2 = self._dec2(torch.cat([d3, e2], dim=1))
+            d1 = self._dec1(torch.cat([d2, e1], dim=1))
 
-            # Nivel 2: refinamiento con skip e2
-            d2 = self._dec2(
-                torch.cat([d3, e2], dim=1)              # [B, 96+48, T=50]
-            )  # [B, 48, T=50]
-
-            # Nivel 1: refinamiento con skip e1
-            d1 = self._dec1(
-                torch.cat([d2, e1], dim=1)              # [B, 48+24, T=50]
-            )  # [B, 32, T=50]
-
-            # Si por alguna razón T != clip_len, interpolamos
             if d1.shape[2] != clip_len:
                 d1 = F.interpolate(d1, size=clip_len,
                                    mode='linear', align_corners=False)
 
-            feat = d1.permute(0, 2, 1)  # [B, T=50, 32]
+            feat = d1.permute(0, 2, 1)
 
-            # GRU opcional (solo en x3d_m_unet_gru)
             if self._has_gru:
-                feat, _ = self._gru(feat)  # [B, T=50, hidden*2]
+                feat, _ = self._gru(feat)
 
-            return self._fc(feat)  # [B, T=50, num_classes+1]
+            return self._fc(feat)
 
         def _augment_3d(self, x):
             """Augmentación para input 3D [B, C, T, H, W]."""
             B, C, T, H, W = x.shape
-            x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W]
+            x = x.permute(0, 2, 1, 3, 4)
             for i in range(B):
                 x[i] = self.augmentation(x[i])
-            return x.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+            return x.permute(0, 2, 1, 3, 4)
 
         def _standarize_3d(self, x):
             """Normalización ImageNet para input 3D [B, C, T, H, W]."""
@@ -369,26 +353,28 @@ class Model(BaseRGBModel):
         with torch.no_grad() if optimizer is None else nullcontext():
             for batch_idx, batch in enumerate(tqdm(loader)):
                 frame = batch['frame'].to(self.device).float()
-                label = batch['label'].to(self.device).long()
+                label = batch['label'].to(self.device)
 
                 with torch.cuda.amp.autocast():
                     pred = self._model(frame)
                     pred = pred.view(-1, self._num_classes + 1)
-                    
-                    # ── TGLS: labels suaves vs labels duros ─────────────
+
                     if label.dtype == torch.float32:
-                        # Label suave [B*T, C+1]: usar KL divergence
-                        label = label.view(-1, self._num_classes + 1)
+                        # ── TGLS: label suave [B*T, C+1] ────────────
+                        # Usamos KL divergence: mide distancia entre
+                        # la distribución predicha y la gaussiana suave
+                        label_soft = label.view(-1, self._num_classes + 1)
                         log_pred = torch.log(
                             torch.softmax(pred, dim=-1) + 1e-8)
                         loss = F.kl_div(
-                            log_pred, label,
+                            log_pred,
+                            label_soft,
                             reduction='batchmean')
                     else:
-                        # Label duro [B*T]: cross entropy normal
-                        label = label.view(-1)
+                        # ── Label duro: cross entropy normal ─────────
+                        label_hard = label.view(-1)
                         loss = F.cross_entropy(
-                            pred, label,
+                            pred, label_hard,
                             reduction='mean', weight=weights)
 
                 if optimizer is not None:
@@ -402,7 +388,7 @@ class Model(BaseRGBModel):
     def predict(self, seq):
         if not isinstance(seq, torch.Tensor):
             seq = torch.FloatTensor(seq)
-        if len(seq.shape) == 4:  # (L, C, H, W) → añadir batch
+        if len(seq.shape) == 4:
             seq = seq.unsqueeze(0)
         if seq.device != self.device:
             seq = seq.to(self.device)

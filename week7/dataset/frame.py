@@ -31,17 +31,20 @@ class ActionSpotDataset(Dataset):
             classes,                    # dict of class names to idx
             game_file,                 # path to label json
             frame_dir,                  # path to frames
-            store_dir,                  # path to store files (with frames path and labels per clip)
+            store_dir,                  # path to store files
             store_mode,                 # 'store' or 'load'
             clip_len,                   # Number of frames per clip
             dataset_len,                # Number of clips
-            stride=1,                   # Downsample frame rate
-            overlap=1,                  # Overlap between clips (in proportion to clip_len)
-            pad_len=DEFAULT_PAD_LEN,    # Number of frames to pad the start
-                                        # and end of videos
-            dataset = 'soccernetball',     # Dataset name
-            labels_dir = None,          # Directory with labels for SoccerNetBall
-            task = 'classification'     # Classification or localization
+            stride=1,
+            overlap=1,
+            pad_len=DEFAULT_PAD_LEN,
+            dataset='soccernetball',
+            labels_dir=None,
+            task='classification',
+            # ── TGLS ────────────────────────────────────────────────
+            use_tgls=False,
+            tgls_sigma=0.55,
+            tgls_window=5,
     ):
         self._src_file = game_file
         self._games = load_json(game_file)
@@ -60,13 +63,18 @@ class ActionSpotDataset(Dataset):
         assert overlap >= 0 and overlap <= 1
         self._clip_sampling_step = 1 if overlap == 1 else int((1 - overlap) * clip_len * stride)
         self._pad_len = pad_len
-        assert pad_len >= 0     
+        assert pad_len >= 0
         self._labels_dir = labels_dir
         self._task = task
         assert task in ['classification', 'spotting']
 
+        # TGLS params
+        self._use_tgls = use_tgls
+        self._tgls_sigma = tgls_sigma
+        self._tgls_window = tgls_window
+
         #Frame reader class
-        self._frame_reader = FrameReader(frame_dir, dataset = dataset)
+        self._frame_reader = FrameReader(frame_dir, dataset=dataset)
 
         #Store or load clips
         if self._store_mode == 'store':
@@ -82,14 +90,11 @@ class ActionSpotDataset(Dataset):
         self._total_len = len(self._frame_paths)
 
     def _store_clips(self):
-        #Initialize frame paths list
         self._frame_paths = []
         self._labels_store = []
 
         for video in tqdm(self._games):
             video_len = int(video['num_frames'])
-
-            #Load labels
             video_half = 1
             labels_file = load_json(os.path.join(self._labels_dir, video['video'] + '/Labels-ball.json'))['annotations']
 
@@ -98,24 +103,21 @@ class ActionSpotDataset(Dataset):
                 frames_paths = self._frame_reader.load_paths(video['video'], base_idx, base_idx + self._clip_len * self._stride, stride=self._stride)
 
                 labels = []
-
                 for event in labels_file:
                     event_half = int(event['gameTime'][0])
                     if event_half == video_half:
-                        event_frame = int(int(event['position']) / 1000 * FPS_SN) #miliseconds to frames
-                        label_idx = (event_frame - base_idx) // self._stride #position of event in clip
+                        event_frame = int(int(event['position']) / 1000 * FPS_SN)
+                        label_idx = (event_frame - base_idx) // self._stride
 
                         if (label_idx >= 0 and label_idx < self._clip_len):
                             label = self._class_dict[event['label']]
-                            labels.append({'label': label, 'label_idx': label_idx}) #add label and position to list (for both classification and location)
+                            labels.append({'label': label, 'label_idx': label_idx})
 
-                if frames_paths[1] != -1: #in case no frames were available
-
+                if frames_paths[1] != -1:
                     self._frame_paths.append(frames_paths)
                     self._labels_store.append(labels)
 
-        #Save to store
-        store_path = os.path.join(self._store_dir, 'LEN' + str(self._clip_len) + 'SPLIT' + self._split) #store clips information of dataset with LEN and SPLIT information
+        store_path = os.path.join(self._store_dir, 'LEN' + str(self._clip_len) + 'SPLIT' + self._split)
 
         if not os.path.exists(store_path):
             os.makedirs(store_path)
@@ -126,10 +128,10 @@ class ActionSpotDataset(Dataset):
             pickle.dump(self._labels_store, f)
         print('Stored clips to ' + store_path)
         return
-    
+
     def _load_clips(self):
         store_path = os.path.join(self._store_dir, 'LEN' + str(self._clip_len) + 'SPLIT' + self._split)
-        
+
         with open(store_path + '/frame_paths.pkl', 'rb') as f:
             self._frame_paths = pickle.load(f)
         with open(store_path + '/labels.pkl', 'rb') as f:
@@ -137,42 +139,87 @@ class ActionSpotDataset(Dataset):
         print('Loaded clips from ' + store_path)
         return
 
+    def _generate_tgls_labels(self, hard_labels):
+        """
+        Convierte labels duros [L] en labels suaves [L, C+1] usando
+        un kernel gaussiano centrado en cada acción.
+
+        hard_labels: np.array [L] con índice de clase (0=background)
+        returns:     np.array [L, num_classes+1] con distribución suave
+        """
+        L = len(hard_labels)
+        num_classes = len(self._class_dict)
+        soft = np.zeros((L, num_classes + 1), dtype=np.float32)
+
+        half_w = self._tgls_window // 2
+
+        for t in range(L):
+            c = hard_labels[t]
+            if c == 0:
+                # Background: label duro, toda la masa en clase 0
+                soft[t, 0] = 1.0
+            else:
+                # Acción: distribuir con gaussiana alrededor de t
+                for dt in range(-half_w, half_w + 1):
+                    t2 = t + dt
+                    if 0 <= t2 < L:
+                        weight = np.exp(-dt ** 2 / (2 * self._tgls_sigma ** 2))
+                        # Usamos max para no sobreescribir si hay dos
+                        # acciones cerca
+                        if weight > soft[t2, c]:
+                            soft[t2, c] = weight
+
+        # Normalizar: cada frame debe sumar 1
+        # Los frames sin ninguna acción asignada se quedan como background
+        for t in range(L):
+            row_sum = soft[t].sum()
+            if row_sum == 0:
+                soft[t, 0] = 1.0
+            else:
+                soft[t] /= row_sum
+
+        return soft
+
     def _get_one(self):
-        #Get random index
         idx = random.randint(0, self._total_len - 1)
 
-        #Get frame_path and labels dict
         frames_path = self._frame_paths[idx]
-        dict_label = self._labels_store[idx]      
+        dict_label = self._labels_store[idx]
 
-        #Load frames
         frames = self._frame_reader.load_frames(frames_path, pad=True, stride=self._stride)
 
-        #Process labels
         if self._task == 'spotting':
-            labels = np.zeros(self._clip_len, np.int64)
+            # Labels duros [L]: siempre los necesitamos
+            hard_labels = np.zeros(self._clip_len, np.int64)
             for label in dict_label:
-                labels[label['label_idx']] = label['label']
+                hard_labels[label['label_idx']] = label['label']
+
+            if self._use_tgls:
+                # Labels suaves [L, C+1]: float32 para el KL divergence
+                labels = self._generate_tgls_labels(hard_labels)
+                # Los devolvemos como float32
+                labels = labels.astype(np.float32)
+            else:
+                labels = hard_labels
 
         elif self._task == 'classification':
-            labels = np.zeros(len(self._class_dict), np.int64) #C classes
+            labels = np.zeros(len(self._class_dict), np.int64)
             for label in dict_label:
-                labels[label['label']-1] = 1 # labels start at 1
+                labels[label['label'] - 1] = 1
+            hard_labels = labels  # para contains_event
 
-        return {'frame': frames, 'contains_event': int(np.sum(labels) > 0),
+        return {'frame': frames,
+                'contains_event': int(np.sum(hard_labels) > 0),
                 'label': labels}
 
     def __getitem__(self, unused):
-        ret = self._get_one()
-
-        return ret
+        return self._get_one()
 
     def __len__(self):
         return self._dataset_len
 
     def print_info(self):
         _print_info_helper(self._src_file, self._games)
-
 
 
 class FrameReader:
@@ -184,7 +231,7 @@ class FrameReader:
     def read_frame(self, frame_path):
         img = torchvision.io.read_image(frame_path)
         return img
-    
+
     def load_paths(self, video_name, start, end, stride=1):
 
         path = os.path.join(self._frame_dir, video_name)
@@ -206,7 +253,7 @@ class FrameReader:
             frame_path = os.path.join(path, 'frame' + str(frame) + '.jpg')
             base_path = path
             ndigits = -1
-            
+
             exist_frame = os.path.exists(frame_path)
             if exist_frame & (found_start == -1):
                 found_start = frame
@@ -214,10 +261,10 @@ class FrameReader:
             if not exist_frame:
                 pad_end += 1
 
-        ret = [base_path, found_start, pad_start, pad_end, ndigits, (end-start) // stride]
+        ret = [base_path, found_start, pad_start, pad_end, ndigits, (end - start) // stride]
 
         return ret
-    
+
     def load_frames(self, paths, pad=False, stride=1):
         base_path = paths[0]
         start = paths[1]
@@ -230,20 +277,18 @@ class FrameReader:
         if ndigits == -1:
             path = os.path.join(base_path, 'frame')
             _ = [ret.append(self.read_frame(path + str(start + j * stride) + '.jpg')) for j in range(length - pad_start - pad_end)]
-
         else:
             path = base_path + '/'
             _ = [ret.append(self.read_frame(path + str(start + j * stride).zfill(ndigits) + '.jpg')) for j in range(length - pad_start - pad_end)]
 
         ret = torch.stack(ret, dim=int(len(ret[0].shape) == 4))
 
-        # Always pad start, but only pad end if requested
         if pad_start > 0 or (pad and pad_end > 0):
             ret = torch.nn.functional.pad(
-                ret, (0, 0, 0, 0, 0, 0, pad_start, pad_end if pad else 0))            
+                ret, (0, 0, 0, 0, 0, 0, pad_start, pad_end if pad else 0))
 
         return ret
-    
+
     def load_frames_test(self, video_name, start, end, pad=False, stride=1):
         ret = []
         n_pad_start = 0
@@ -256,20 +301,18 @@ class FrameReader:
                 continue
 
             frame_path = os.path.join(self._frame_dir, video_name, 'frame' + str(frame_num) + '.jpg')
-                
+
             try:
                 img = self.read_frame(frame_path)
                 ret.append(img)
             except RuntimeError:
-                # print('Missing file!', frame_path)
                 n_pad_end += 1
 
         if len(ret) == 0:
-            return -1 # Return -1 if no frames were loaded
-        
+            return -1
+
         ret = torch.stack(ret, dim=int(len(ret[0].shape) == 4))
 
-        # Always pad start, but only pad end if requested
         if n_pad_start > 0 or (pad and n_pad_end > 0):
             ret = torch.nn.functional.pad(
                 ret, (0, 0, 0, 0, 0, 0, n_pad_start, n_pad_end if pad else 0))
@@ -283,9 +326,10 @@ class FrameReader:
 
 
 def _print_info_helper(src_file, labels):
-        num_frames = sum([x['num_frames'] for x in labels])
-        print('{} : {} videos, {} frames'.format(
-            src_file, len(labels), num_frames))
+    num_frames = sum([x['num_frames'] for x in labels])
+    print('{} : {} videos, {} frames'.format(
+        src_file, len(labels), num_frames))
+
 
 class ActionSpotVideoDataset(Dataset):
 
@@ -298,9 +342,9 @@ class ActionSpotVideoDataset(Dataset):
             overlap=0,
             stride=1,
             pad_len=DEFAULT_PAD_LEN,
-            dataset = 'soccernetball',
-            labels_dir = None,
-            task = 'spotting'
+            dataset='soccernetball',
+            labels_dir=None,
+            task='spotting'
     ):
         self._src_file = game_file
         self._games = load_json(game_file)
@@ -320,15 +364,14 @@ class ActionSpotVideoDataset(Dataset):
         self._task = task
         assert task == 'spotting'
 
-        self._frame_reader = FrameReader(frame_dir, dataset = dataset)
+        self._frame_reader = FrameReader(frame_dir, dataset=dataset)
 
         self._clips = []
         for l in self._games:
             has_clip = False
             for i in range(
                 -pad_len * self._stride,
-                max(0, int(l['num_frames'] - (self._clip_sampling_step * stride))), \
-                # Need to ensure that all clips have at least one frame
+                max(0, int(l['num_frames'] - (self._clip_sampling_step * stride))),
                 self._clip_sampling_step
             ):
                 has_clip = True
@@ -339,7 +382,6 @@ class ActionSpotVideoDataset(Dataset):
         return len(self._clips)
 
     def __getitem__(self, idx):
-
         video_name, start = self._clips[idx]
 
         frames = self._frame_reader.load_frames_test(
@@ -348,16 +390,14 @@ class ActionSpotVideoDataset(Dataset):
 
         return {'video': video_name, 'start': start // self._stride,
                 'frame': frames}
-    
+
     @property
     def videos(self):
         return sorted([
             (v['video'], math.ceil(v['num_frames'] / self._stride),
-                FPS_SN / self._stride) for v in self._games])
+             FPS_SN / self._stride) for v in self._games])
 
     def print_info(self):
         num_frames = sum([x['num_frames'] for x in self._games])
-
         print('{} : {} videos, {} frames ({} stride)'.format(
-            self._src_file, len(self._games), num_frames, self._stride)
-        )
+            self._src_file, len(self._games), num_frames, self._stride))

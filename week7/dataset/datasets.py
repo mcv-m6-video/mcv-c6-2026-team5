@@ -20,9 +20,18 @@ def get_datasets(args):
     stride = args.stride if "stride" in args else DEFAULT_STRIDE
     overlap = args.overlap if "overlap" in args else DEFAULT_OVERLAP
 
+    # Parámetros TGLS (con defaults seguros para retrocompatibilidad)
+    use_tgls      = getattr(args, 'use_tgls', False)
+    tgls_sigma    = getattr(args, 'tgls_sigma', 0.55)
+    tgls_window   = getattr(args, 'tgls_window', 5)
+
     dataset_kwargs = {
-        'stride': stride, 'overlap': overlap, 'dataset': args.dataset,
-        'labels_dir': args.labels_dir, 'task': args.task,
+        'stride': stride, 'overlap': overlap,
+        'dataset': args.dataset, 'labels_dir': args.labels_dir,
+        'task': args.task,
+        'use_tgls': use_tgls,
+        'tgls_sigma': tgls_sigma,
+        'tgls_window': tgls_window,
     }
 
     print('Dataset size:', dataset_len)
@@ -39,9 +48,12 @@ def get_datasets(args):
         args.clip_len, dataset_len // 4, **dataset_kwargs)
     val_data.print_info()
 
-    # ── Dataset de vídeo para evaluación en validación ───────────────
-    dataset_kwargs_video = {k: v for k, v in dataset_kwargs.items()}
-    dataset_kwargs_video['overlap'] = 0
+    # Dataset de vídeo para evaluación (sin TGLS, siempre labels duros)
+    dataset_kwargs_video = {
+        'stride': stride, 'overlap': 0,
+        'dataset': args.dataset, 'labels_dir': args.labels_dir,
+        'task': args.task,
+    }
 
     val_video_data = ActionSpotVideoDataset(
         classes, os.path.join('data', args.dataset, 'val.json'),
