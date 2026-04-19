@@ -100,23 +100,42 @@ class Model(BaseRGBModel):
                 self._dec3_up = nn.ConvTranspose1d(
                     192, 96, kernel_size=4, stride=2, padding=1
                 )  # [B, 192, 25] → [B, 96, 50]
+
+                # self._dec3_refine = nn.Sequential(
+                #     nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(96), nn.ReLU()
+                # )  # [B, 96+96, 50] → [B, 96, 50]
+
+                # self._dec2 = nn.Sequential(
+                #     nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(48), nn.ReLU()
+                # )  # [B, 96+48, 50] → [B, 48, 50]
+
+                # self._dec1 = nn.Sequential(
+                #     nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(32), nn.ReLU()
+                # )  # [B, 48+24, 50] → [B, 32, 50]
+
+                # self._d = 128
+
                 self._dec3_refine = nn.Sequential(
                     nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
                     nn.BatchNorm1d(96), nn.ReLU()
-                )  # [B, 96+96, 50] → [B, 96, 50]
-
+                )  # 192 → 96
                 self._dec2 = nn.Sequential(
-                    nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
-                    nn.BatchNorm1d(48), nn.ReLU()
-                )  # [B, 96+48, 50] → [B, 48, 50]
-
+                    nn.Conv1d(96 + 48, 64, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(64), nn.ReLU()
+                )  # 144 → 64
                 self._dec1 = nn.Sequential(
-                    nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
-                    nn.BatchNorm1d(32), nn.ReLU()
-                )  # [B, 48+24, 50] → [B, 32, 50]
+                    nn.Conv1d(64 + 24, 64, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(64), nn.ReLU()
+                )  # 88 → 64
 
-                self._d = 32
+                # Proyección hacia espacio del backbone (igual que Exp2)
+                self._proj = nn.Linear(64, 192)
 
+                self._d = 192  # igual que x3d_m y x3d_m_gru
+                
             # ── X3D-M + UNet con reducción temporal L→L'→L + BiGRU ──
             elif self._feature_arch == 'x3d_m_unet_gru':
                 x3d = torch.hub.load(
@@ -138,31 +157,61 @@ class Model(BaseRGBModel):
                 self._dec3_up = nn.ConvTranspose1d(
                     192, 96, kernel_size=4, stride=2, padding=1
                 )
+                # self._dec3_refine = nn.Sequential(
+                #     nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(96), nn.ReLU()
+                # )
+                # self._dec2 = nn.Sequential(
+                #     nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(48), nn.ReLU()
+                # )
+                # self._dec1 = nn.Sequential(
+                #     nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
+                #     nn.BatchNorm1d(32), nn.ReLU()
+                # )
+
+                # gru_hidden = args.gru_hidden if hasattr(args, 'gru_hidden') else 256
+                # gru_layers = args.gru_layers if hasattr(args, 'gru_layers') else 2
+
+                # self._gru = nn.GRU(
+                #     input_size=128,
+                #     hidden_size=gru_hidden,
+                #     num_layers=gru_layers,
+                #     batch_first=True,
+                #     bidirectional=True,
+                #     dropout=0.2 if gru_layers > 1 else 0.0
+                # )
+                # self._d = gru_hidden * 2
+
                 self._dec3_refine = nn.Sequential(
                     nn.Conv1d(96 + 96, 96, kernel_size=3, padding=1),
                     nn.BatchNorm1d(96), nn.ReLU()
                 )
                 self._dec2 = nn.Sequential(
-                    nn.Conv1d(96 + 48, 48, kernel_size=3, padding=1),
-                    nn.BatchNorm1d(48), nn.ReLU()
+                    nn.Conv1d(96 + 48, 64, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(64), nn.ReLU()
                 )
                 self._dec1 = nn.Sequential(
-                    nn.Conv1d(48 + 24, 32, kernel_size=3, padding=1),
-                    nn.BatchNorm1d(32), nn.ReLU()
+                    nn.Conv1d(64 + 24, 64, kernel_size=3, padding=1),
+                    nn.BatchNorm1d(64), nn.ReLU()
                 )
 
+                # Proyección hacia espacio del backbone
+                self._proj = nn.Linear(64, 192)
+
+                # GRU idéntico al Exp2
                 gru_hidden = args.gru_hidden if hasattr(args, 'gru_hidden') else 256
                 gru_layers = args.gru_layers if hasattr(args, 'gru_layers') else 2
 
                 self._gru = nn.GRU(
-                    input_size=32,
+                    input_size=192,  # ← igual que Exp2
                     hidden_size=gru_hidden,
                     num_layers=gru_layers,
                     batch_first=True,
                     bidirectional=True,
                     dropout=0.2 if gru_layers > 1 else 0.0
                 )
-                self._d = gru_hidden * 2
+                self._d = gru_hidden * 2  # 512, igual que Exp2
 
             else:
                 raise NotImplementedError(args.feature_arch)
@@ -277,14 +326,27 @@ class Model(BaseRGBModel):
             d2 = self._dec2(torch.cat([d3, e2], dim=1))
             d1 = self._dec1(torch.cat([d2, e1], dim=1))
 
+            # if d1.shape[2] != clip_len:
+            #     d1 = F.interpolate(d1, size=clip_len,
+            #                        mode='linear', align_corners=False)
+
+            # feat = d1.permute(0, 2, 1)
+
+            # if self._has_gru:
+            #     feat, _ = self._gru(feat)
+
+            # return self._fc(feat)
             if d1.shape[2] != clip_len:
                 d1 = F.interpolate(d1, size=clip_len,
-                                   mode='linear', align_corners=False)
+                                mode='linear', align_corners=False)
 
-            feat = d1.permute(0, 2, 1)
+            feat = d1.permute(0, 2, 1)  # [B, T, 64]
+
+            # Proyección: 64 → 192 (mismo espacio que backbone X3D-M)
+            feat = self._proj(feat)      # [B, T, 192]
 
             if self._has_gru:
-                feat, _ = self._gru(feat)
+                feat, _ = self._gru(feat)  # [B, T, 512]
 
             return self._fc(feat)
 

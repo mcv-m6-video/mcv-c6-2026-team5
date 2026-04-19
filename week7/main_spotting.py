@@ -40,6 +40,7 @@ def update_args(args, config):
     args.task = config['task']
     args.batch_size = config['batch_size']
     args.clip_len = config['clip_len']
+    args.stride = config['stride']
     args.dataset = config['dataset']
     args.epoch_num_frames = config['epoch_num_frames']
     args.feature_arch = config['feature_arch']
