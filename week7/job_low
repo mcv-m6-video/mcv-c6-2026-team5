@@ -6,4 +6,10 @@
 #SBATCH -o logs/log_%u_%j.out   # File to which STDOUT will be written
 #SBATCH -e logs/log_%u_%j.err   # File to which STDERR will be written
 
-python main_spotting.py --model 2_x3d_gru
+
+#python main_spotting.py --model 4-1_x3d_unet_gru_1layer
+#python main_spotting_aux.py --model 4-1_x3d_unet_gru_hid128
+
+python main_spotting.py --model 4-1_x3d_unet_gru_hid512
+
+

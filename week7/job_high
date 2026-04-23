@@ -7,5 +7,18 @@
 #SBATCH -o logs/log_%u_%j.out   # File to which STDOUT will be written
 #SBATCH -e logs/log_%u_%j.err   # File to which STDERR will be written
 
-python main_spotting.py --model 1_x3d_base
-python main_spotting.py --model 2_x3d_gru
+# python main_spotting_aux.py --model 4-1_x3d_unet_gru_3layer
+# python main_spotting_aux.py --model 4-1_x3d_unet_gru_hid512
+
+# python qualitative_analysis.py \
+#     --model_base Best_model_E1 \
+#     --model_best 4-1_x3d_unet_gru_hid512 \
+#     --config_dir_base config \
+#     --config_dir_best config \
+#     --week_base 6 \
+#     --week_best 7 \
+#     --store_dir /ghome/group05/datasets/WEEK7/SN-BAS-2025_savedata/splits \
+#     --split val \
+#     --num_clips 3 \
+#     --find_improvement \
+#     --target_class 12
