@@ -1,40 +1,79 @@
-### Master in Computer Vision (Barcelona) 2025/26
-# Project 2 (Task 2) @ C6 - Video Analysis
+# Week 7 – Ball Action Spotting (Temporal Aggregation)
 
-This repository provides the starter code for Task 2 of Project 2: Action spotting on the SoccerNet Ball Action Spotting 2025 (SN-BAS-2025) dataset.
+This week extends the ball action spotting task from Week 6 by introducing **temporal aggregation** via a UNet-like architecture built on top of the X3D-M spatiotemporal backbone. The main goals are:
 
-The installation of dependencies, how to obtain the dataset, and instructions on running the spotting baseline are detailed next.
+- Implement intermediate temporal reduction (L → L' → L) using a UNet-like encoder-decoder.
+- Evaluate model performance at two temporal tolerances: **1.0s** and **0.5s**.
+- Refine the best model from Week 6 using insights from the experimental pipeline.
 
-## Dependencies
+---
 
-You can install the required packages for the project using the following command, with `requirements.txt` specifying the versions of the various packages:
+## 📁 Repository Structure
 
 ```
+week7/
+├── config/                  # JSON config files for each experiment
+├── dataset/
+│   ├── datasets.py          # Dataset loader
+│   └── frame.py             # ActionSpotDataset, ActionSpotVideoDataset, TGLS
+├── model/
+│   ├── model_spotting.py    # All architectures: X3D base, +GRU, +UNet, +UNet+GRU
+│   ├── model_spotting_w6.py # W6 model kept for qualitative comparison
+│   └── modules.py
+├── util/
+│   ├── eval_spotting.py     # Dual-tolerance evaluation (1s and 0.5s) + NMS
+│   └── io.py
+├── main_spotting.py         # Training and evaluation script
+└── qualitative_spotting.py  # Animated qualitative comparison (W6 vs W7)
+```
+
+---
+
+## 🏗️ Best Model Architecture
+
+**X3D-M Encoder → UNet Decoder → Linear Projection → Bi-GRU → FC Head**
+
+The X3D-M backbone processes the full clip spatiotemporally. After spatial pooling, a **MaxPool1d bottleneck** compresses the temporal dimension (T=50 → T'=25). The decoder recovers it via **ConvTranspose1d with skip connections** from each encoder stage. A **linear projection** (64 → 192 dims) aligns the decoder output with the X3D-M embedding space before passing it to the same **Bi-GRU** used in Exp 2, enabling a fair comparison.
+
+---
+
+## 🧪 Results
+
+| Model | mAP10 @1s | mAP10 @0.5s |
+|-------|-----------|-------------|
+| W6 Best (RNY008 + TCN + NMS) | 35.5 | 30.2 |
+| Exp 1: X3D-M base | 41.3 | 36.3 |
+| Exp 2: X3D-M + Bi-GRU | 45.3 | 40.0 |
+| Exp 3: X3D-M + UNet | 39.1 | 34.8 |
+| Exp 4: X3D-M + UNet + Bi-GRU | 43.7 | 40.1 |
+| Exp 5–7: Stride & Clip Length search | up to 45.3 | — |
+| Exp 8: AvgPool bottleneck | 45.8 | 40.8 |
+| **Best: UNet + Bi-GRU (Max, 2L, 512h)** | **47.2** | **41.9** |
+| + TGLS | 42.7 | 39.4 |
+| + Optimized NMS | 43.2 | 38.9 |
+
+---
+
+## ⚙️ Running the Code
+
+```bash
 pip install -r requirements.txt
+pip install pytorchvideo
 ```
 
-## Getting the dataset and data preparation
+On first run, set `store_mode: "store"` in the config to generate clip caches. Then switch to `"load"` for subsequent runs.
 
-Refer to the README files in the [data/soccernetball](/data/soccernetball) directory for instructions on how to download the SNABS2025 dataset, preparation of directories, and extraction of the video frames.
-
-
-## Running the baseline for Task 2
-
-The `main_spotting.py` is designed to train and evaluate the baseline using the settings specified in a configuration file. You can run `main_spotting.py` using the following command:
-
-```
-python3 main_spotting.py --model <model_name>
+```bash
+python main_spotting.py --model <config_name>
 ```
 
-Here, `<model_name>` can be chosen freely but must match the name of a configuration file (e.g. `baseline.json`) located in the config directory [config](/config/). For example, to chose the baseline model, you would run: `python3 main_spotting.py --model baseline`.
+Results are logged to **WandB** and saved locally as CSV files under `save_dir/<model_name>/`.
 
-For additional details on configuration options using the configuration file, refer to the README in the [config](/config/) directory.
+---
 
-## Important notes
+## 📦 Checkpoint
 
-- Before running the model, ensure that you have downloaded the dataset frames and updated the directory-related configuration parameters in the relevant [config](/config/) files.
-- Make sure to run the `main_spotting.py` with the `mode` parameter set to `store` at least once to generate the clips and save them. After this initial run, you can set the `mode` to `load` to reuse the same clips in subsequent executions.
+Best model checkpoint available at:
 
-## Support
+> 🔗 [Best Model W7 – Google Drive](https://drive.google.com/drive/folders/1b0Fe95kcJf9bDk4NaBILYh-AnUrjxH9H?usp=drive_link)
 
-For any issues related to the code, please email [aclapes@ub.edu](mailto:aclapes@ub.edu) and CC [arturxe@gmail.com](mailto:arturxe@gmail.com).
