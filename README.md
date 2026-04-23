@@ -9,9 +9,13 @@ This repository contains the source code, experiments, and results for the **C6:
 * Maiol Sabater
 * Gerard Vilaplana
 
+## Presentation Link
+
+* [Final Presentation](https://docs.google.com/presentation/d/1jIR1OEuPBhrsNZia6PKogbipJuzMgmVGlLhO0GB-l0g/edit?usp=sharing)
+
 ## Checkpoints of Best Models
 
-* Week5 - Best Model Action Classification: https://drive.google.com/drive/folders/1b0Fe95kcJf9bDk4NaBILYh-AnUrjxH9H?usp=drive_link
+* Week5-7 - Best Model Ball Action: https://drive.google.com/drive/folders/1b0Fe95kcJf9bDk4NaBILYh-AnUrjxH9H?usp=drive_link
 
 ## 🚀 Projects Overview
 
@@ -29,6 +33,8 @@ Focuses on temporal action spotting within long, untrimmed sports broadcast vide
 * **[Week 5: Action Classification on SoccerNet](./week5)** Initial exploration using clip-level action classification. Implementation of Temporal Convolutional Networks (TCNs), Multi-clip fusion strategies, Class-Aware Sampling, and Multi-modal architectures (RGB + Optical Flow).
 
 * **[Week 6: Action Spotting](./week6)** Transition to precise frame-level temporal action spotting. Implementation of Non-Maximum Suppression (NMS) ablations for peak detection, Temporal Shift modules, Lightweight Temporal Attention, and animated temporal probability visualizations.
+
+* **[Week 7: Action Spotting](./week7)** Implementation of UNet with 3XD-M backbone for action spotting, increasing the performance from the past week. Techniques such as TGLS and temporal reduction were also implemented.
 
 ## 🛠️ General Setup & Installation
 
